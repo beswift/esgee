@@ -1,0 +1,14 @@
+# build output
+bin/
+obj/
+publish/
+Releases/
+
+# user/IDE state
+*.user
+*.suo
+.vs/
+.idea/
+
+# local agent state
+.claude/

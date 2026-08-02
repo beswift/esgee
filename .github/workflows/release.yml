@@ -1,0 +1,44 @@
+name: release
+
+# Tag vX.Y.Z -> self-contained publish stamped with that version -> vpk pack
+# (installer + full/delta update packages) -> GitHub Release. Installed copies
+# poll GitHub Releases (see UpdateService.cs) and update themselves.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Version from tag
+        id: v
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish (self-contained win-x64)
+        run: dotnet publish src/Esgee/Esgee.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.v.outputs.version }} -o publish
+
+      - name: Install vpk
+        run: dotnet tool install -g vpk
+
+      # Previous release, so vpk can build a delta package. Absent on the very
+      # first release — that's fine.
+      - name: Download previous release
+        run: vpk download github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Pack
+        run: vpk pack -u esgee -v ${{ steps.v.outputs.version }} -p publish -e esgee.exe --packTitle esgee --packAuthors "Ben Swift" -i src/Esgee/esgee.ico --shortcuts StartMenuRoot
+
+      - name: Upload to GitHub Release
+        run: vpk upload github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --publish --releaseName "esgee v${{ steps.v.outputs.version }}" --tag ${{ github.ref_name }}

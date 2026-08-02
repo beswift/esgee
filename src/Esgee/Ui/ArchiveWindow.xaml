@@ -1,0 +1,76 @@
+<Window x:Class="Esgee.Ui.ArchiveWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="esgee archive"
+        Width="1060" Height="700" MinWidth="560" MinHeight="360"
+        Background="#141418" WindowStartupLocation="CenterScreen">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Search bar. The placeholder doubles as the how-to. -->
+        <Grid Grid.Row="0" Margin="16,14,16,10">
+            <Border Background="{StaticResource Surface}"
+                    BorderBrush="{StaticResource Hairline}" BorderThickness="1"
+                    CornerRadius="9">
+                <Grid>
+                    <TextBox x:Name="SearchBox" Background="Transparent" BorderThickness="0"
+                             Foreground="{StaticResource Ink}" CaretBrush="{StaticResource Ink}"
+                             FontSize="14" Padding="12,9"
+                             TextChanged="OnSearchChanged" />
+                    <TextBlock x:Name="Placeholder" Margin="14,0,0,0" VerticalAlignment="Center"
+                               Foreground="{StaticResource InkMuted}" FontSize="14"
+                               IsHitTestVisible="False"
+                               Text="Search by any text that was on screen…" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Results grid. Drag any tile out as a file; double-click copies. -->
+        <ListBox x:Name="Results" Grid.Row="1" Margin="10,0,10,10"
+                 Background="Transparent" BorderThickness="0"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 VirtualizingPanel.ScrollUnit="Pixel">
+            <ListBox.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <WrapPanel />
+                </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="Margin" Value="6" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ListBoxItem">
+                                <Border x:Name="Card" Background="{StaticResource Surface}"
+                                        BorderBrush="{StaticResource Hairline}" BorderThickness="1"
+                                        CornerRadius="10" Padding="6">
+                                    <ContentPresenter />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="Card" Property="Background"
+                                                Value="{StaticResource SurfaceHover}" />
+                                    </Trigger>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter TargetName="Card" Property="BorderBrush"
+                                                Value="{StaticResource Accent}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </ListBox.ItemContainerStyle>
+        </ListBox>
+
+        <!-- Empty state. -->
+        <TextBlock x:Name="Empty" Grid.Row="1" HorizontalAlignment="Center"
+                   VerticalAlignment="Center" FontSize="14"
+                   Foreground="{StaticResource InkMuted}" Visibility="Collapsed" />
+    </Grid>
+</Window>

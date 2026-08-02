@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- WinForms is here only for NotifyIcon (WPF has no tray support) and for
+         its more forgiving CF_DIB clipboard reader. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Required by [LibraryImport] source generation. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Glass tile + crop brackets, generated art. -->
+    <ApplicationIcon>esgee.ico</ApplicationIcon>
+    <AssemblyName>esgee</AssemblyName>
+    <RootNamespace>Esgee</RootNamespace>
+    <!-- CI overrides this from the git tag (dotnet publish -p:Version=x.y.z);
+         local builds report 0.0.0 so a dev copy is never mistaken for a release. -->
+    <Version Condition="'$(Version)' == ''">0.0.0</Version>
+    <!-- Velopack needs to run before WPF spins up, so Main lives in Program.cs. -->
+    <StartupObject>Esgee.Program</StartupObject>
+    <!-- Resident tray app: trim startup work, keep it light in memory. -->
+    <TieredPGO>true</TieredPGO>
+    <!-- InvariantGlobalization is tempting for a tray app but breaks WPF's font
+         cache (MajorLanguages needs the "en" culture) — text measurement then
+         throws mid-render. Do not re-add. -->
+    <!-- WFO0003 tells WinForms apps to set DPI mode via project property rather
+         than the manifest. This is a WPF app — WPF reads PerMonitorV2 from the
+         manifest and never calls Application.SetHighDpiMode. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+  </PropertyGroup>
+
+  <!-- Enabling UseWindowsForms alongside UseWPF implicitly imports both
+       System.Windows.Forms and System.Drawing, which collide with WPF on
+       Application, DataObject, UserControl, Point, MouseEventArgs... Dropping
+       the implicit imports makes WPF the unqualified default; the handful of
+       WinForms/GDI+ touchpoints opt in explicitly instead. -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <!-- Ship the ico beside the exe so the tray icon can load the same art the
+       exe embeds (NotifyIcon can't read the embedded resource sizes well). -->
+  <ItemGroup>
+    <Content Include="esgee.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <!-- Microsoft.Data.Sqlite 10.0.0 still drags in SQLitePCLRaw 2.1.11, which
+         carries GHSA-2m69-gcr7-jv3q. A direct reference overrides the
+         transitive one. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+    <!-- Install/update framework: GitHub Releases feed, delta updates, no
+         code-signing requirement. See UpdateService.cs. -->
+    <PackageReference Include="Velopack" Version="1.2.0" />
+  </ItemGroup>
+
+</Project>
