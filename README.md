@@ -34,10 +34,13 @@ First-run checklist:
 - Remote machines via TeamViewer: enable **Send key combinations** or the
   Win/PrtScn chords stay on the local side.
 
-Updates and reinstalls never touch your data: settings live at
+Updates never touch your data: settings live at
 `%LOCALAPPDATA%\esgee\settings.json` and captures at `%USERPROFILE%\esgee\`,
-both outside the replaced `current\` directory. (A full *uninstall* removes
-`%LOCALAPPDATA%\esgee` including settings — the capture archive still survives.)
+and self-updates only swap the `current\` directory. Two caveats, verified the
+hard way: **re-running Setup.exe over an existing install** and **uninstalling**
+both reset `%LOCALAPPDATA%\esgee` entirely (settings and the downloaded ffmpeg
+— back up `settings.json` first if it matters). The capture archive in
+`%USERPROFILE%\esgee` survives everything.
 
 ### Why Velopack (and not MSIX/AppInstaller)
 
