@@ -218,6 +218,19 @@ public sealed class ShotStore : IDisposable
         }
     }
 
+    /// <summary>Cheap change token for live views: moves when rows are added,
+    /// removed, or OCR completes. One scalar WAL read — safe to poll.</summary>
+    public string ChangeToken()
+    {
+        lock (_gate)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText =
+                "SELECT COALESCE(MAX(id),0) || ':' || COUNT(*) || ':' || COALESCE(SUM(ocr_done),0) FROM shots;";
+            return (string)(cmd.ExecuteScalar() ?? "0:0:0");
+        }
+    }
+
     private static List<Shot> ReadShots(SqliteCommand cmd)
     {
         var list = new List<Shot>();

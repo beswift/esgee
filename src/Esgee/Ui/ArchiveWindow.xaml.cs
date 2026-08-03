@@ -21,6 +21,9 @@ public partial class ArchiveWindow : Window
     private readonly ShotStore _store;
     private readonly Action _beforeClipboardWrite;
     private readonly DispatcherTimer _debounce;
+    private readonly DispatcherTimer _livePoll;
+    private string _lastToken = "";
+    private bool _dragging;
 
     public ArchiveWindow(ShotStore store, Action beforeClipboardWrite)
     {
@@ -33,6 +36,30 @@ public partial class ArchiveWindow : Window
         _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _debounce.Tick += (_, _) => { _debounce.Stop(); Refresh(); };
 
+        // Live refresh. This window is often a SEPARATE process from the
+        // resident app doing the capturing (taskbar pin launches --archive), so
+        // no in-memory event can reach it — instead poll the index for a cheap
+        // change token (WAL read, sub-ms) and refresh when it moves. Also picks
+        // up OCR completions, so an open search gains matches as text lands.
+        _livePoll = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
+        _livePoll.Tick += (_, _) =>
+        {
+            if (!IsVisible || _dragging || _debounce.IsEnabled) return;
+            try
+            {
+                var token = _store.ChangeToken();
+                if (token == _lastToken) return;
+                _lastToken = token;
+                Log.Info("archive: index changed, auto-refreshing");
+                Refresh();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"archive live poll failed: {ex.Message}");
+            }
+        };
+        _livePoll.Start();
+
         PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.Escape) Close();
@@ -44,6 +71,7 @@ public partial class ArchiveWindow : Window
         };
 
         Loaded += (_, _) => { Refresh(); SearchBox.Focus(); };
+        Closed += (_, _) => { _livePoll.Stop(); _debounce.Stop(); };
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -66,6 +94,10 @@ public partial class ArchiveWindow : Window
     private void Refresh()
     {
         var query = SearchBox.Text.Trim();
+
+        // Any refresh observes the current index state; keep the poll's token
+        // in step so it doesn't immediately re-refresh over us.
+        try { _lastToken = _store.ChangeToken(); } catch { }
 
         List<Shot> shots;
         try
@@ -175,6 +207,10 @@ public partial class ArchiveWindow : Window
                 return;
 
             pressed = false;
+            // DoDragDrop pumps messages, so the live-poll timer CAN fire inside
+            // it — a mid-drag refresh would tear the tile out from under the
+            // drag. The flag makes the poll sit out until the drop completes.
+            _dragging = true;
             try
             {
                 DragDrop.DoDragDrop(panel, DragSource.BuildDataObject(shot), DragDropEffects.Copy);
@@ -182,6 +218,10 @@ public partial class ArchiveWindow : Window
             catch (Exception ex)
             {
                 Log.Error($"archive drag failed: {ex.Message}");
+            }
+            finally
+            {
+                _dragging = false;
             }
         };
         panel.PreviewMouseLeftButtonUp += (_, _) => pressed = false;
