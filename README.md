@@ -1,5 +1,7 @@
 # esgee
 
+**[beswift.github.io/esgee](https://beswift.github.io/esgee/)**
+
 Fast screenshots for Windows: hotkey → capture → a draggable card in the
 corner. Everything you take is saved automatically and **searchable by the
 text that was on screen**.
