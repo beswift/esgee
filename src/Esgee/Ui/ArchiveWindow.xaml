@@ -29,7 +29,7 @@
             </Border>
         </Grid>
 
-        <!-- Results grid. Drag any tile out as a file; double-click copies. -->
+        <!-- Results grid. Click previews; drag any tile out as a file. -->
         <ListBox x:Name="Results" Grid.Row="1" Margin="10,0,10,10"
                  Background="Transparent" BorderThickness="0"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -72,5 +72,59 @@
         <TextBlock x:Name="Empty" Grid.Row="1" HorizontalAlignment="Center"
                    VerticalAlignment="Center" FontSize="14"
                    Foreground="{StaticResource InkMuted}" Visibility="Collapsed" />
+
+        <!-- Lightbox preview: click a tile to open, Esc / click-away to close,
+             arrow keys to move through the current results. -->
+        <Grid x:Name="PreviewLayer" Grid.RowSpan="2" Visibility="Collapsed">
+            <Border x:Name="PreviewScrim" Background="#E00B0B0E"
+                    MouseLeftButtonDown="OnScrimClick" />
+
+            <Border MaxWidth="960" MaxHeight="620" Margin="40"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="{StaticResource Surface}"
+                    BorderBrush="{StaticResource Hairline}" BorderThickness="1"
+                    CornerRadius="14" Padding="10"
+                    Effect="{StaticResource CardLift}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Stills use the Image; videos swap in a muted looping player. -->
+                    <Border Grid.Row="0" CornerRadius="8" ClipToBounds="True"
+                            MinWidth="320" MinHeight="200">
+                        <Grid>
+                            <Image x:Name="PreviewImage" Stretch="Uniform"
+                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                            <MediaElement x:Name="PreviewVideo" Stretch="Uniform"
+                                          LoadedBehavior="Manual" UnloadedBehavior="Stop"
+                                          Volume="0" Visibility="Collapsed"
+                                          MediaEnded="OnPreviewVideoEnded" />
+                        </Grid>
+                    </Border>
+
+                    <DockPanel Grid.Row="1" Margin="4,10,4,2" LastChildFill="False">
+                        <TextBlock x:Name="PreviewCaption" DockPanel.Dock="Left"
+                                   VerticalAlignment="Center" FontSize="12"
+                                   Foreground="{StaticResource InkMuted}" />
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <TextBlock Text="‹ › navigate   Esc close" Margin="0,0,14,0"
+                                       VerticalAlignment="Center" FontSize="11"
+                                       Foreground="{StaticResource InkMuted}" Opacity="0.7" />
+                            <Button x:Name="PreviewCopyBtn" Style="{StaticResource IconButton}"
+                                    Content="&#xE8C8;" FontFamily="Segoe Fluent Icons"
+                                    ToolTip="Copy to clipboard" Click="OnPreviewCopy" />
+                            <Button x:Name="PreviewFolderBtn" Style="{StaticResource IconButton}"
+                                    Content="&#xE838;" FontFamily="Segoe Fluent Icons"
+                                    ToolTip="Show in folder" Click="OnPreviewReveal" />
+                            <Button Style="{StaticResource IconButton}"
+                                    Content="&#xE711;" FontFamily="Segoe Fluent Icons"
+                                    ToolTip="Close" Click="OnPreviewClose" />
+                        </StackPanel>
+                    </DockPanel>
+                </Grid>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

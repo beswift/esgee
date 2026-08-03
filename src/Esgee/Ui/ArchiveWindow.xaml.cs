@@ -62,7 +62,21 @@ public partial class ArchiveWindow : Window
 
         PreviewKeyDown += (_, e) =>
         {
-            if (e.Key == Key.Escape) Close();
+            if (e.Key == Key.Escape)
+            {
+                // Esc peels one layer at a time: preview first, then the window.
+                if (PreviewLayer.Visibility == Visibility.Visible) ClosePreview();
+                else Close();
+                e.Handled = true;
+                return;
+            }
+            if (PreviewLayer.Visibility == Visibility.Visible &&
+                e.Key is Key.Left or Key.Right)
+            {
+                StepPreview(e.Key == Key.Left ? -1 : +1);
+                e.Handled = true;
+                return;
+            }
             if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control)
             {
                 SearchBox.Focus();
@@ -91,6 +105,13 @@ public partial class ArchiveWindow : Window
     // search can't paint into the new result set.
     private int _generation;
 
+    // Shots behind the current tiles. Refresh() assigns a NEW list each time,
+    // so a preview that grabbed the old reference keeps a stable snapshot to
+    // navigate even if a live-poll refresh replaces the grid underneath it.
+    private List<Shot> _currentShots = [];
+    private List<Shot> _previewShots = [];
+    private int _previewIndex = -1;
+
     private void Refresh()
     {
         var query = SearchBox.Text.Trim();
@@ -113,6 +134,7 @@ public partial class ArchiveWindow : Window
         }
 
         var gen = ++_generation;
+        _currentShots = shots;
         Results.Items.Clear();
         foreach (var shot in shots)
             Results.Items.Add(BuildTile(shot, gen));
@@ -183,7 +205,7 @@ public partial class ArchiveWindow : Window
 
         var panel = new StackPanel { Children = { thumb, caption } };
 
-        panel.ToolTip = "drag out · double-click to copy · right-click for more";
+        panel.ToolTip = "click to preview · drag out · right-click for more";
 
         Point pressAt = default;
         var pressed = false;
@@ -192,11 +214,6 @@ public partial class ArchiveWindow : Window
         {
             pressed = true;
             pressAt = e.GetPosition(panel);
-            if (e.ClickCount == 2)
-            {
-                pressed = false;
-                Copy(shot);
-            }
         };
         panel.PreviewMouseMove += (_, e) =>
         {
@@ -224,7 +241,12 @@ public partial class ArchiveWindow : Window
                 _dragging = false;
             }
         };
-        panel.PreviewMouseLeftButtonUp += (_, _) => pressed = false;
+        panel.PreviewMouseLeftButtonUp += (_, _) =>
+        {
+            // A press that never crossed the drag threshold is a click: preview.
+            if (pressed) OpenPreview(shot);
+            pressed = false;
+        };
 
         var menu = new ContextMenu();
         var copy = new MenuItem { Header = "Copy to clipboard" };
@@ -236,6 +258,123 @@ public partial class ArchiveWindow : Window
         panel.ContextMenu = menu;
 
         return panel;
+    }
+
+    // ---- lightbox preview ---------------------------------------------------
+
+    private Shot? PreviewShot =>
+        _previewIndex >= 0 && _previewIndex < _previewShots.Count
+            ? _previewShots[_previewIndex] : null;
+
+    private void OpenPreview(Shot shot)
+    {
+        _previewShots = _currentShots;
+        _previewIndex = _previewShots.FindIndex(s => s.Id == shot.Id);
+        if (_previewIndex < 0) { _previewShots = [shot]; _previewIndex = 0; }
+
+        PreviewLayer.Visibility = Visibility.Visible;
+        ShowPreviewContent(shot);
+        Focus(); // arrow keys must land on the window, not the search box
+    }
+
+    private void StepPreview(int delta)
+    {
+        if (_previewShots.Count == 0) return;
+        var next = Math.Clamp(_previewIndex + delta, 0, _previewShots.Count - 1);
+        if (next == _previewIndex) return;
+        _previewIndex = next;
+        ShowPreviewContent(_previewShots[next]);
+    }
+
+    private void ShowPreviewContent(Shot shot)
+    {
+        PreviewCaption.Text = shot.IsVideo
+            ? $"{shot.TakenAt:MMM d, yyyy  HH:mm}   ▶ {shot.DurationText}   {shot.Width}×{shot.Height}"
+            : $"{shot.TakenAt:MMM d, yyyy  HH:mm}   {shot.Width}×{shot.Height}";
+
+        if (shot.IsVideo)
+        {
+            // Play the actual clip — muted loop; a frozen thumbnail would be a
+            // letdown for the one media type whose point is motion.
+            PreviewImage.Visibility = Visibility.Collapsed;
+            PreviewImage.Source = null;
+            PreviewVideo.Visibility = Visibility.Visible;
+            try
+            {
+                PreviewVideo.Source = new Uri(shot.Path);
+                PreviewVideo.Position = TimeSpan.Zero;
+                PreviewVideo.Play();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"preview video failed for {shot.Path}: {ex.Message}");
+            }
+            return;
+        }
+
+        PreviewVideo.Stop();
+        PreviewVideo.Source = null; // release the file handle
+        PreviewVideo.Visibility = Visibility.Collapsed;
+        PreviewImage.Visibility = Visibility.Visible;
+
+        // Full-quality decode, off the UI thread; guard against the user having
+        // stepped on before a slow decode lands.
+        var expected = shot.Id;
+        var path = shot.Path;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                using var fs = System.IO.File.OpenRead(path);
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.StreamSource = fs;
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.EndInit();
+                bmp.Freeze();
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (PreviewShot?.Id == expected) PreviewImage.Source = bmp;
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"preview decode failed for {path}: {ex.Message}");
+            }
+        });
+    }
+
+    private void ClosePreview()
+    {
+        PreviewVideo.Stop();
+        PreviewVideo.Source = null;
+        PreviewImage.Source = null;
+        PreviewLayer.Visibility = Visibility.Collapsed;
+        _previewIndex = -1;
+        SearchBox.Focus();
+    }
+
+    private void OnScrimClick(object sender, MouseButtonEventArgs e)
+    {
+        if (ReferenceEquals(e.OriginalSource, PreviewScrim)) ClosePreview();
+    }
+
+    private void OnPreviewClose(object sender, RoutedEventArgs e) => ClosePreview();
+
+    private void OnPreviewCopy(object sender, RoutedEventArgs e)
+    {
+        if (PreviewShot is { } shot) Copy(shot);
+    }
+
+    private void OnPreviewReveal(object sender, RoutedEventArgs e)
+    {
+        if (PreviewShot is { } shot) Reveal(shot);
+    }
+
+    private void OnPreviewVideoEnded(object sender, RoutedEventArgs e)
+    {
+        PreviewVideo.Position = TimeSpan.Zero;
+        PreviewVideo.Play();
     }
 
     private void Copy(Shot shot)
