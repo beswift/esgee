@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>esgee — fast screenshots for Windows, searchable by what they said</title>
+<meta name="description" content="Hotkey → capture → a floating card you can drag into any app. Every screenshot auto-saves and is OCR-indexed locally — search your history by the text that was on screen. Open source, MIT, local-first.">
+<link rel="icon" type="image/png" sizes="256x256" href="assets/esgee-256.png">
+<link rel="apple-touch-icon" href="assets/esgee-256.png">
+<meta name="theme-color" content="#07090f">
+<meta property="og:type" content="website">
+<meta property="og:title" content="esgee — fast screenshots for Windows">
+<meta property="og:description" content="Hotkey → capture → drag the card anywhere. OCR-searchable screenshot history, screen recording, agent-friendly CLI. Local-first and MIT.">
+<meta property="og:url" content="https://beswift.github.io/esgee/">
+<meta property="og:image" content="https://beswift.github.io/esgee/assets/esgee-256.png">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#07090f;
+    --panel:rgba(255,255,255,.032);
+    --panel-strong:rgba(255,255,255,.055);
+    --line:rgba(255,255,255,.09);
+    --line-soft:rgba(255,255,255,.055);
+    --ink:#e9edf6;
+    --muted:#9aa3b5;
+    --dim:#6b7386;
+    --accent:#5b8cff;
+    --accent-soft:rgba(91,140,255,.14);
+    --accent-line:rgba(91,140,255,.38);
+    --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+    --sans:"Bricolage Grotesque",system-ui,Segoe UI,sans-serif;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--sans);
+    font-size:16px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  /* atmosphere */
+  .sky{
+    position:fixed;inset:0;z-index:-1;pointer-events:none;
+    background:
+      radial-gradient(52rem 30rem at 72% -8%, rgba(91,140,255,.16), transparent 60%),
+      radial-gradient(40rem 26rem at 8% 12%, rgba(91,140,255,.07), transparent 60%),
+      radial-gradient(60rem 40rem at 50% 115%, rgba(91,140,255,.06), transparent 60%);
+  }
+  .sky::after{
+    content:"";position:absolute;inset:0;
+    background-image:radial-gradient(rgba(255,255,255,.065) 1px, transparent 1px);
+    background-size:26px 26px;
+    mask-image:radial-gradient(48rem 34rem at 60% 0%, #000 0%, transparent 75%);
+    -webkit-mask-image:radial-gradient(48rem 34rem at 60% 0%, #000 0%, transparent 75%);
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+
+  /* nav */
+  nav{display:flex;align-items:center;justify-content:space-between;padding:22px 0}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:1.05rem;color:var(--ink);text-decoration:none}
+  .brand img{width:28px;height:28px;border-radius:7px}
+  .nav-links{display:flex;gap:10px;align-items:center}
+  .nav-links a{color:var(--muted);text-decoration:none;font-size:.9rem;padding:7px 12px;border-radius:9px;transition:color .15s,background .15s}
+  .nav-links a:hover{color:var(--ink);background:var(--panel-strong)}
+
+  /* hero */
+  header.hero{padding:64px 0 40px;text-align:center}
+  .badge{
+    display:inline-flex;align-items:center;gap:8px;
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;color:var(--muted);
+    border:1px solid var(--line);border-radius:999px;padding:6px 14px;
+    background:var(--panel);
+  }
+  .badge .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+  h1.title{
+    font-size:clamp(2.6rem,7vw,4.4rem);font-weight:700;letter-spacing:-.02em;line-height:1.05;
+    margin:26px auto 18px;max-width:17ch;
+  }
+  h1 .frame{position:relative;display:inline-block;padding:.04em .12em;color:var(--accent)}
+  h1 .frame i{position:absolute;width:.42em;height:.42em;border:3px solid var(--accent);opacity:.85}
+  h1 .frame i:first-child{top:-.08em;left:-.1em;border-right:0;border-bottom:0;border-radius:.09em 0 0 0}
+  h1 .frame i:last-child{bottom:-.08em;right:-.1em;border-left:0;border-top:0;border-radius:0 0 .09em 0}
+  .sub{color:var(--muted);font-size:clamp(1rem,2.4vw,1.2rem);max-width:52ch;margin:0 auto 34px}
+  .sub strong{color:var(--ink);font-weight:600}
+  .cta-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;align-items:center}
+  .btn{
+    display:inline-flex;align-items:center;gap:9px;text-decoration:none;font-weight:600;font-size:.95rem;
+    padding:13px 24px;border-radius:12px;transition:transform .15s,box-shadow .15s,background .15s,border-color .15s;
+  }
+  .btn-primary{
+    color:#fff;background:linear-gradient(180deg,#6d99ff,#4a7bf0);
+    box-shadow:0 1px 0 rgba(255,255,255,.25) inset,0 8px 24px -8px rgba(91,140,255,.55);
+  }
+  .btn-primary:hover{transform:translateY(-1px);box-shadow:0 1px 0 rgba(255,255,255,.25) inset,0 12px 30px -8px rgba(91,140,255,.7)}
+  .btn-ghost{color:var(--ink);border:1px solid var(--line);background:var(--panel)}
+  .btn-ghost:hover{background:var(--panel-strong);border-color:rgba(255,255,255,.16)}
+  .cta-note{font-family:var(--mono);font-size:.72rem;color:var(--dim);margin-top:16px}
+
+  /* keyboard hint row */
+  .keys{display:flex;gap:8px;justify-content:center;align-items:center;margin-top:34px;flex-wrap:wrap;color:var(--dim);font-size:.82rem}
+  kbd{
+    font-family:var(--mono);font-size:.75rem;color:var(--muted);
+    background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.025));
+    border:1px solid var(--line);border-bottom-color:rgba(255,255,255,.14);
+    border-radius:7px;padding:4px 9px;box-shadow:0 2px 0 rgba(0,0,0,.35);
+  }
+  .keys .arrow{color:var(--accent);font-family:var(--mono)}
+
+  /* mockup scene */
+  .scene{margin:64px 0 20px;position:relative}
+  .stage{
+    position:relative;border:1px solid var(--line);border-radius:20px;overflow:hidden;
+    background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.012));
+    box-shadow:0 1px 0 rgba(255,255,255,.06) inset,0 40px 80px -40px rgba(0,0,0,.8);
+    padding:clamp(18px,4vw,44px);
+    min-height:340px;
+  }
+  .stage::before{content:"";position:absolute;inset:0;background:radial-gradient(36rem 16rem at 50% 0%,rgba(91,140,255,.08),transparent 70%);pointer-events:none}
+  /* corner crop marks on the stage */
+  .crop{position:absolute;width:22px;height:22px;border:2px solid var(--accent-line)}
+  .crop.tl{top:10px;left:10px;border-right:0;border-bottom:0;border-radius:6px 0 0 0}
+  .crop.tr{top:10px;right:10px;border-left:0;border-bottom:0;border-radius:0 6px 0 0}
+  .crop.bl{bottom:10px;left:10px;border-right:0;border-top:0;border-radius:0 0 0 6px}
+  .crop.br{bottom:10px;right:10px;border-left:0;border-top:0;border-radius:0 0 6px 0}
+
+  .fakewin{
+    width:min(560px,72%);border-radius:12px;border:1px solid var(--line-soft);
+    background:rgba(10,13,22,.75);overflow:hidden;
+    box-shadow:0 20px 50px -20px rgba(0,0,0,.7);
+  }
+  .fakewin .bar{display:flex;gap:6px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line-soft);background:rgba(255,255,255,.02)}
+  .fakewin .bar span{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.12)}
+  .fakewin .bar .t{font-family:var(--mono);font-size:.62rem;color:var(--dim);margin-left:8px;width:auto;height:auto;background:none;border-radius:0}
+  .fakewin .body{padding:16px 14px;display:grid;gap:9px}
+  .ln{height:9px;border-radius:5px;background:rgba(255,255,255,.06)}
+  .ln.w60{width:60%}.ln.w80{width:80%}.ln.w45{width:45%}.ln.w70{width:70%}
+  .ln.err{background:rgba(255,110,110,.18);border:1px solid rgba(255,110,110,.25);width:74%;height:22px;display:flex;align-items:center;padding:0 8px;font-family:var(--mono);font-size:.6rem;color:#ff9d9d}
+
+  .shelf{position:absolute;right:clamp(14px,4vw,40px);bottom:clamp(14px,4vw,36px);width:clamp(150px,24vw,196px)}
+  .card{
+    border-radius:12px;border:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(30,38,60,.92),rgba(16,20,33,.92));
+    box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 18px 40px -14px rgba(0,0,0,.8);
+    padding:8px;
+  }
+  .card .thumb{border-radius:8px;height:74px;background:
+    linear-gradient(135deg,rgba(91,140,255,.35),rgba(91,140,255,.06) 55%),
+    repeating-linear-gradient(0deg,rgba(255,255,255,.05) 0 2px,transparent 2px 11px);
+    border:1px solid rgba(255,255,255,.07)}
+  .card .meta{display:flex;justify-content:space-between;align-items:center;padding:7px 3px 2px;font-family:var(--mono);font-size:.58rem;color:var(--dim)}
+  .card .meta b{color:var(--accent);font-weight:500}
+  .shelf .card.under{position:absolute;inset:0;transform:translate(9px,9px) rotate(2.4deg);opacity:.5;z-index:-1}
+  .shelf .card.under2{position:absolute;inset:0;transform:translate(18px,17px) rotate(4.5deg);opacity:.22;z-index:-2}
+  .dragcard{
+    position:absolute;left:50%;top:38%;width:clamp(130px,20vw,170px);
+    transform:rotate(-5deg);cursor:grab;
+    animation:floaty 5.5s ease-in-out infinite;
+  }
+  @keyframes floaty{0%,100%{transform:rotate(-5deg) translateY(0)}50%{transform:rotate(-4deg) translateY(-8px)}}
+  .dragcard .card{border-color:var(--accent-line);box-shadow:0 0 0 3px var(--accent-soft),0 24px 50px -16px rgba(0,0,0,.85)}
+  .dragtrail{position:absolute;pointer-events:none}
+  .cursor-dot{
+    position:absolute;left:calc(50% + 118px);top:calc(38% + 98px);width:13px;height:13px;
+    border:2px solid #fff;border-radius:50% 0 50% 50%;
+    background:rgba(255,255,255,.25);animation:floaty 5.5s ease-in-out infinite;
+    filter:drop-shadow(0 2px 6px rgba(0,0,0,.6));
+  }
+  .stage .cap{
+    position:absolute;left:50%;bottom:12px;transform:translateX(-50%);
+    font-family:var(--mono);font-size:.66rem;color:var(--dim);letter-spacing:.05em;white-space:nowrap;
+  }
+
+  /* sections */
+  section{padding:72px 0}
+  .kicker{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:12px}
+  h2{font-size:clamp(1.5rem,3.6vw,2.1rem);font-weight:700;letter-spacing:-.015em;line-height:1.15;margin-bottom:10px}
+  .lead{color:var(--muted);max-width:56ch}
+
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:40px}
+  @media (max-width:760px){.grid{grid-template-columns:1fr}}
+  .feature{
+    position:relative;border:1px solid var(--line);border-radius:var(--radius);
+    background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.012));
+    box-shadow:0 1px 0 rgba(255,255,255,.05) inset;
+    padding:26px 26px 24px;overflow:hidden;
+    transition:border-color .2s,transform .2s;
+  }
+  .feature:hover{border-color:rgba(91,140,255,.3);transform:translateY(-2px)}
+  .feature h3{font-size:1.08rem;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:10px}
+  .feature p{color:var(--muted);font-size:.92rem}
+  .feature p code, .lead code{font-family:var(--mono);font-size:.8em;background:var(--panel-strong);border:1px solid var(--line-soft);border-radius:5px;padding:1px 6px;color:var(--ink)}
+  .fic{width:30px;height:30px;flex:none;border-radius:8px;display:grid;place-items:center;background:var(--accent-soft);border:1px solid var(--accent-line)}
+  .fic svg{width:15px;height:15px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+  /* search vignette */
+  .vignette{margin-top:18px;border:1px solid var(--line-soft);border-radius:10px;background:rgba(7,9,15,.6);padding:12px;font-family:var(--mono);font-size:.72rem}
+  .searchbox{display:flex;align-items:center;gap:8px;border:1px solid var(--accent-line);border-radius:8px;padding:8px 10px;background:rgba(91,140,255,.06);color:var(--ink)}
+  .searchbox svg{width:13px;height:13px;stroke:var(--accent);fill:none;stroke-width:2.2;stroke-linecap:round}
+  .searchbox .caret{width:7px;height:14px;background:var(--accent);animation:blink 1.1s steps(1) infinite;margin-left:1px}
+  @keyframes blink{50%{opacity:0}}
+  .hit{display:flex;gap:9px;align-items:center;margin-top:9px;color:var(--dim)}
+  .hit .th{width:30px;height:22px;flex:none;border-radius:4px;border:1px solid var(--line);background:linear-gradient(135deg,rgba(91,140,255,.3),rgba(255,255,255,.04))}
+  .hit mark{background:rgba(91,140,255,.28);color:var(--ink);border-radius:3px;padding:0 3px}
+  .hit .when{margin-left:auto;font-size:.62rem;color:var(--dim);flex:none}
+
+  /* code block */
+  .codeblock{
+    margin-top:18px;border:1px solid var(--line-soft);border-radius:10px;background:rgba(7,9,15,.72);
+    font-family:var(--mono);font-size:.74rem;line-height:1.8;padding:14px 16px;overflow-x:auto;color:var(--muted);
+  }
+  .codeblock .c{color:var(--dim)}
+  .codeblock .a{color:var(--accent)}
+  .codeblock .s{color:#9ecb8f}
+
+  /* recording strip */
+  .recstrip{margin-top:18px;display:flex;align-items:center;gap:10px;border:1px solid var(--line-soft);border-radius:10px;background:rgba(7,9,15,.6);padding:12px 14px;font-family:var(--mono);font-size:.7rem;color:var(--dim)}
+  .recdot{width:9px;height:9px;border-radius:50%;background:#ff5d5d;box-shadow:0 0 10px rgba(255,93,93,.8);animation:blink 1.4s steps(1) infinite;flex:none}
+  .recbar{flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden}
+  .recbar i{display:block;height:100%;width:38%;border-radius:3px;background:linear-gradient(90deg,rgba(91,140,255,.5),var(--accent))}
+  .pill{border:1px solid var(--line);border-radius:999px;padding:2px 9px;flex:none}
+
+  /* install */
+  .install{
+    border:1px solid var(--line);border-radius:20px;padding:clamp(28px,5vw,52px);text-align:center;
+    background:
+      radial-gradient(30rem 14rem at 50% -20%,rgba(91,140,255,.13),transparent 70%),
+      linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.01));
+    box-shadow:0 1px 0 rgba(255,255,255,.06) inset;
+    position:relative;overflow:hidden;
+  }
+  .termline{
+    display:flex;align-items:center;gap:12px;max-width:720px;margin:28px auto 0;
+    border:1px solid var(--line);border-radius:12px;background:rgba(5,7,12,.8);
+    padding:13px 14px 13px 18px;text-align:left;
+  }
+  .termline code{
+    font-family:var(--mono);font-size:.72rem;color:var(--muted);flex:1;overflow-x:auto;white-space:nowrap;
+    scrollbar-width:none;
+  }
+  .termline code::-webkit-scrollbar{display:none}
+  .termline code .p{color:var(--accent)}
+  .copybtn{
+    flex:none;display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+    font-family:var(--mono);font-size:.7rem;color:var(--ink);
+    border:1px solid var(--line);border-radius:8px;background:var(--panel-strong);
+    padding:8px 13px;transition:background .15s,border-color .15s;
+  }
+  .copybtn:hover{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.2)}
+  .copybtn svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .install .fine{font-family:var(--mono);font-size:.68rem;color:var(--dim);margin-top:16px}
+
+  footer{border-top:1px solid var(--line-soft);padding:34px 0 44px;margin-top:40px}
+  .foot{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;color:var(--dim);font-size:.84rem}
+  .foot a{color:var(--muted);text-decoration:none}
+  .foot a:hover{color:var(--ink)}
+  .foot .left{display:flex;align-items:center;gap:10px}
+  .foot img{width:20px;height:20px;border-radius:5px;opacity:.85}
+
+  /* reveal animation */
+  .up{opacity:0;transform:translateY(14px);animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards}
+  .d1{animation-delay:.08s}.d2{animation-delay:.16s}.d3{animation-delay:.24s}.d4{animation-delay:.34s}.d5{animation-delay:.46s}
+  @keyframes rise{to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    .up{opacity:1;transform:none}
+  }
+  @media (max-width:640px){
+    .fakewin{width:78%}
+    .dragcard{left:38%;top:30%}
+    .cursor-dot{left:calc(38% + 100px);top:calc(30% + 88px)}
+    .stage{min-height:300px}
+    .stage .cap{display:none}
+    section{padding:56px 0}
+  }
+</style>
+</head>
+<body>
+<div class="sky" aria-hidden="true"></div>
+
+<div class="wrap">
+  <nav>
+    <a class="brand" href="#"><img src="assets/esgee-256.png" alt="" width="28" height="28">esgee</a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#agents">For agents</a>
+      <a href="https://github.com/beswift/esgee">GitHub</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="badge up"><span class="dot"></span>OPEN SOURCE &middot; MIT &middot; WINDOWS</div>
+    <h1 class="title up d1">Screenshots that <span class="frame"><i></i>remember<i></i></span> what they said.</h1>
+    <p class="sub up d2">Hotkey &rarr; capture &rarr; a floating card you drag into any app as a real file. Every shot auto-saves and is <strong>OCR-indexed locally</strong> &mdash; search your entire screenshot history by the text that was on screen, in milliseconds.</p>
+    <div class="cta-row up d3">
+      <a class="btn btn-primary" href="https://github.com/beswift/esgee/releases/latest/download/esgee-win-Setup.exe">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M4 20h16"/></svg>
+        Download for Windows
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/beswift/esgee">View on GitHub</a>
+    </div>
+    <p class="cta-note up d3">per-user install &middot; no admin &middot; self-updating</p>
+    <div class="keys up d4">
+      <kbd>Win</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>C</kbd>
+      <span class="arrow">&rarr;</span><span>drag a region</span>
+      <span class="arrow">&rarr;</span><span>it&rsquo;s on the shelf</span>
+    </div>
+  </header>
+
+  <div class="scene up d5" role="img" aria-label="Stylized mockup: a capture card being dragged from the corner shelf into an application window">
+    <div class="stage">
+      <span class="crop tl"></span><span class="crop tr"></span><span class="crop bl"></span><span class="crop br"></span>
+      <div class="fakewin" aria-hidden="true">
+        <div class="bar"><span></span><span></span><span></span><span class="t">issue-tracker &mdash; drop a file&hellip;</span></div>
+        <div class="body">
+          <div class="ln w60"></div>
+          <div class="ln w80"></div>
+          <div class="ln err">ERR_CONNECTION_REFUSED &mdash; attach a screenshot?</div>
+          <div class="ln w45"></div>
+          <div class="ln w70"></div>
+        </div>
+      </div>
+      <div class="dragcard" aria-hidden="true">
+        <div class="card">
+          <div class="thumb"></div>
+          <div class="meta"><b>&#8599; drag me</b><span>.png</span></div>
+        </div>
+      </div>
+      <span class="cursor-dot" aria-hidden="true"></span>
+      <div class="shelf" aria-hidden="true">
+        <div class="card">
+          <div class="thumb"></div>
+          <div class="meta"><span>14:02:36</span><span>saved &check;</span></div>
+        </div>
+        <div class="card under"></div>
+        <div class="card under2"></div>
+      </div>
+      <span class="cap">the shelf &mdash; captures wait in the corner until you drag one out</span>
+    </div>
+  </div>
+
+  <section id="features">
+    <p class="kicker">// what it does</p>
+    <h2>Capture is the easy part.<br>Finding it again is the point.</h2>
+    <p class="lead">esgee is a tray app: global hotkeys, a drag-out shelf, and a local archive where every capture is indexed by its own pixels.</p>
+
+    <div class="grid">
+      <div class="feature">
+        <h3><span class="fic"><svg viewBox="0 0 24 24"><path d="M5 9V5h4"/><path d="M19 15v4h-4"/><rect x="5" y="5" width="14" height="14" rx="2" opacity=".35"/></svg></span>Drag-out shelf</h3>
+        <p>Captures stack as floating cards in the corner. Drag one into Slack, an email, a ticket &mdash; it lands as a real file. Click to re-copy, or ignore it: it&rsquo;s already saved. One key re-shoots your last region while you iterate on a UI.</p>
+      </div>
+
+      <div class="feature">
+        <h3><span class="fic"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span>Search what was on screen</h3>
+        <p>Windows&rsquo; built-in OCR + SQLite FTS5 index every capture the moment it&rsquo;s taken. Type a few words from any screenshot you&rsquo;ve ever made:</p>
+        <div class="vignette" aria-hidden="true">
+          <div class="searchbox">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <span>connection refused</span><span class="caret"></span>
+          </div>
+          <div class="hit"><span class="th"></span><span>docker: <mark>connection refused</mark> on :5432&hellip;</span><span class="when">tue 09:14</span></div>
+          <div class="hit"><span class="th"></span><span>curl: (7) <mark>Connection refused</mark></span><span class="when">jul 12</span></div>
+        </div>
+      </div>
+
+      <div class="feature">
+        <h3><span class="fic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" opacity=".35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg></span>Record the region too</h3>
+        <p>Same gesture, moving pictures: one hotkey records a region to MP4, and short clips get a paste-ready GIF automatically. Press again to stop.</p>
+        <div class="recstrip" aria-hidden="true">
+          <span class="recdot"></span>
+          <span>REC 00:07</span>
+          <div class="recbar"><i></i></div>
+          <span class="pill">.mp4</span>
+          <span class="pill">+ .gif</span>
+        </div>
+      </div>
+
+      <div class="feature" id="agents">
+        <h3><span class="fic"><svg viewBox="0 0 24 24"><path d="m5 7 4 4-4 4"/><path d="M12 17h7"/></svg></span>A memory for your agents</h3>
+        <p>The archive is plain PNG/MP4 files plus a CLI. Point a coding agent at it and it can retrieve &ldquo;that error dialog from last Tuesday&rdquo; by content.</p>
+        <div class="codeblock" aria-hidden="true">
+<span class="c">&gt;</span> esgee <span class="a">--search</span> <span class="s">"token expired"</span><br>
+<span class="c">C:\Users\you\esgee\2026\07\14-31-08.png</span><br>
+<span class="c">&gt;</span> esgee <span class="a">--recent</span> 5
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="install">
+      <p class="kicker">// install</p>
+      <h2>One line. Nothing leaves your machine.</h2>
+      <p class="lead" style="margin:0 auto">Local-first by design: captures, OCR, and the search index all live in <code>%USERPROFILE%\esgee</code>. No account, no cloud, no telemetry.</p>
+      <div class="termline">
+        <code id="cmd"><span class="p">PS&gt;</span> irm https://github.com/beswift/esgee/releases/latest/download/esgee-win-Setup.exe -OutFile "$env:TEMP\esgee-setup.exe"; &amp; "$env:TEMP\esgee-setup.exe"</code>
+        <button class="copybtn" id="copy" type="button" aria-label="Copy install command">
+          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/></svg>
+          <span id="copytext">copy</span>
+        </button>
+      </div>
+      <p class="fine">or grab <a href="https://github.com/beswift/esgee/releases/latest" style="color:var(--muted)">esgee-win-Setup.exe from Releases</a> &middot; keeps itself updated</p>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap foot">
+    <div class="left">
+      <img src="assets/esgee-256.png" alt="" width="20" height="20">
+      <span>esgee &mdash; MIT licensed</span>
+    </div>
+    <div>
+      <a href="https://github.com/beswift/esgee">GitHub</a>
+      &nbsp;&middot;&nbsp;
+      <a href="https://github.com/beswift/esgee/releases">Releases</a>
+      &nbsp;&middot;&nbsp;
+      <a href="https://github.com/beswift/esgee/blob/main/docs/NOTES.md">Design notes</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  const btn=document.getElementById('copy'),txt=document.getElementById('copytext');
+  const cmd='irm https://github.com/beswift/esgee/releases/latest/download/esgee-win-Setup.exe -OutFile "$env:TEMP\\esgee-setup.exe"; & "$env:TEMP\\esgee-setup.exe"';
+  btn.addEventListener('click',async()=>{
+    try{await navigator.clipboard.writeText(cmd);txt.textContent='copied';}
+    catch{txt.textContent='select it';}
+    setTimeout(()=>txt.textContent='copy',1600);
+  });
+</script>
+</body>
+</html>
