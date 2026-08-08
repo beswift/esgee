@@ -79,7 +79,11 @@ public sealed class ShotStore : IDisposable
     }
 
     /// <summary>Writes the PNG and records it. Returns once the file is on disk —
-    /// callers depend on that, because drag-out hands out a real file path.</summary>
+    /// callers depend on that, because drag-out hands out a real file path.
+    /// Identical bytes arriving within a short window return the EXISTING shot:
+    /// the clipboard echo of esgee's own capture can slip past the watcher's
+    /// time-window guard on a slow machine, and content identity is the one
+    /// dedup signal that can't mistime.</summary>
     public Shot Add(byte[] png, int width, int height, DateTimeOffset takenAt)
     {
         var sha = Convert.ToHexString(SHA256.HashData(png));
@@ -89,6 +93,12 @@ public sealed class ShotStore : IDisposable
 
         lock (_gate)
         {
+            if (FindRecentBySha(sha, takenAt, windowSeconds: 10) is { } existing)
+            {
+                Log.Info($"deduplicated identical capture (echo of shot {existing.Id})");
+                return existing;
+            }
+
             var path = Unique(Path.Combine(dir, $"{takenAt:yyyy-MM-dd_HH-mm-ss}.png"));
             File.WriteAllBytes(path, png);
 
@@ -215,6 +225,66 @@ public sealed class ShotStore : IDisposable
                 """;
             cmd.Parameters.AddWithValue("$n", limit);
             return ReadShots(cmd);
+        }
+    }
+
+    /// <summary>Newest shot with this hash inside the window, if any. Caller
+    /// holds the gate.</summary>
+    private Shot? FindRecentBySha(string sha, DateTimeOffset now, int windowSeconds)
+    {
+        using var cmd = _db.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, path, taken_at, width, height, sha256, kind, duration_ms
+            FROM shots WHERE sha256 = $s ORDER BY id DESC LIMIT 1;
+            """;
+        cmd.Parameters.AddWithValue("$s", sha);
+
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+
+        var takenAt = DateTimeOffset.Parse(r.GetString(2));
+        if ((now - takenAt).Duration() > TimeSpan.FromSeconds(windowSeconds)) return null;
+
+        return new Shot(
+            r.GetInt64(0), r.GetString(1), takenAt,
+            r.GetInt32(3), r.GetInt32(4), r.GetString(5),
+            r.GetString(6), r.GetInt64(7));
+    }
+
+    /// <summary>Archive health for `esgee --doctor`: totals, OCR backlog, and
+    /// identical-content duplicate groups (the double-shot signature).</summary>
+    public (long Total, long Videos, long OcrPending, List<string> DupGroups) Doctor()
+    {
+        lock (_gate)
+        {
+            long total, videos, pending;
+            using (var cmd = _db.CreateCommand())
+            {
+                cmd.CommandText = """
+                    SELECT COUNT(*),
+                           COALESCE(SUM(kind = 'video'), 0),
+                           COALESCE(SUM(ocr_done = 0), 0)
+                    FROM shots;
+                    """;
+                using var r = cmd.ExecuteReader();
+                r.Read();
+                (total, videos, pending) = (r.GetInt64(0), r.GetInt64(1), r.GetInt64(2));
+            }
+
+            var dups = new List<string>();
+            using (var cmd = _db.CreateCommand())
+            {
+                cmd.CommandText = """
+                    SELECT sha256, COUNT(*) AS n, MIN(taken_at), GROUP_CONCAT(path, ' | ')
+                    FROM shots GROUP BY sha256 HAVING n > 1
+                    ORDER BY MIN(id) DESC LIMIT 20;
+                    """;
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                    dups.Add($"{r.GetInt64(1)}x  {r.GetString(2)}  {r.GetString(3)}");
+            }
+
+            return (total, videos, pending, dups);
         }
     }
 

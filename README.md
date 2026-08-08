@@ -51,6 +51,8 @@ the clipboard.
   search-as-you-type across the text of every capture; drag any tile out as a
   file.
 - **CLI:** `esgee --search "connection refused"` / `esgee --recent 20`.
+- **Health check:** `esgee --doctor` — archive stats, duplicate detection, and
+  a digest of the local log. Runs entirely offline; paste it into bug reports.
 
 Captures live in `%USERPROFILE%\esgee\yyyy\MM\` as ordinary PNG/MP4 files.
 

@@ -45,10 +45,28 @@ public partial class ArchiveWindow : Window
         _livePoll.Tick += (_, _) =>
         {
             if (!IsVisible || _dragging || _debounce.IsEnabled) return;
+
+            // Never rebuild while the left button is down: a refresh replaces
+            // every tile, and a tile destroyed between mouse-down and mouse-up
+            // silently eats the click (or a nascent drag). This was the "newest
+            // capture won't open" bug — OCR completing on a fresh shot fired a
+            // refresh right as the user clicked it.
+            if (Mouse.LeftButton == MouseButtonState.Pressed) return;
+
             try
             {
                 var token = _store.ChangeToken();
                 if (token == _lastToken) return;
+
+                // Tiles don't render OCR state, so if only ocr_done moved and no
+                // search is active there is nothing visual to update — skip the
+                // rebuild (and its 200 background decodes) entirely.
+                if (SearchBox.Text.Trim().Length == 0 && SameRows(token, _lastToken))
+                {
+                    _lastToken = token;
+                    return;
+                }
+
                 _lastToken = token;
                 Log.Info("archive: index changed, auto-refreshing");
                 Refresh();
@@ -143,6 +161,15 @@ public partial class ArchiveWindow : Window
             ? "No captures yet — take one with the hotkey."
             : $"Nothing matching \"{query}\".";
         Empty.Visibility = shots.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>True when two "maxid:count:ocrdone" tokens differ only in the
+    /// ocr_done component — i.e. no rows were added or removed.</summary>
+    private static bool SameRows(string a, string b)
+    {
+        var pa = a.Split(':');
+        var pb = b.Split(':');
+        return pa.Length == 3 && pb.Length == 3 && pa[0] == pb[0] && pa[1] == pb[1];
     }
 
     /// <summary>Quotes each term so user text can't hit FTS5 operator syntax

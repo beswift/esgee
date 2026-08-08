@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using Esgee.Store;
 
@@ -22,7 +23,7 @@ internal static partial class Cli
         if (args.Length == 0) return false;
 
         var verb = args[0].TrimStart('-').ToLowerInvariant();
-        if (verb is not ("search" or "recent" or "check-drag")) return false;
+        if (verb is not ("search" or "recent" or "check-drag" or "doctor")) return false;
 
         // WinExe has no console of its own; borrow the calling shell's.
         AttachConsole(AttachParentProcess);
@@ -34,6 +35,12 @@ internal static partial class Cli
             if (verb == "check-drag")
             {
                 CheckDrag(store, args.Length > 1 ? args[1] : null);
+                return true;
+            }
+
+            if (verb == "doctor")
+            {
+                Doctor(store, settings);
                 return true;
             }
 
@@ -58,6 +65,50 @@ internal static partial class Cli
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Local health report — the "telemetry" that never phones home. Everything
+    /// here comes from the machine it runs on: archive stats, duplicate-content
+    /// groups (the double-shot signature), and a digest of the local log. Users
+    /// can paste the output into a bug report; nothing is ever transmitted.
+    /// </summary>
+    private static void Doctor(ShotStore store, Settings settings)
+    {
+        Console.WriteLine($"esgee v{UpdateService.CurrentVersion}");
+        Console.WriteLine($"archive : {store.Root}");
+        Console.WriteLine($"settings: {Settings.Path}");
+        Console.WriteLine();
+
+        var (total, videos, pending, dups) = store.Doctor();
+        Console.WriteLine($"captures     : {total} ({videos} recordings)");
+        Console.WriteLine($"ocr backlog  : {pending}");
+        Console.WriteLine($"ffmpeg       : {(File.Exists(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "esgee", "bin", "ffmpeg.exe")) ? "present" : "missing")}");
+        Console.WriteLine();
+
+        Console.WriteLine(dups.Count == 0
+            ? "duplicate-content groups: none"
+            : $"duplicate-content groups ({dups.Count} shown, newest first):");
+        foreach (var d in dups) Console.WriteLine($"  {d}");
+        Console.WriteLine();
+
+        var logPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "esgee", "esgee.log");
+        if (!File.Exists(logPath))
+        {
+            Console.WriteLine("log: none");
+            return;
+        }
+
+        var lines = File.ReadAllLines(logPath);
+        var errors = lines.Where(l => l.Contains(" ERR ")).ToList();
+        var warns = lines.Where(l => l.Contains(" WARN ")).ToList();
+        Console.WriteLine($"log: {lines.Length} lines, {errors.Count} errors, {warns.Count} warnings");
+        foreach (var e in errors.TakeLast(5)) Console.WriteLine($"  {e}");
+        foreach (var w in warns.TakeLast(5)) Console.WriteLine($"  {w}");
     }
 
     /// <summary>
