@@ -64,6 +64,32 @@ public sealed class Settings
     /// <summary>GIFs wider than this are scaled down (aspect preserved).</summary>
     public int GifMaxWidth { get; set; } = 960;
 
+    // ---- Peers (machine-to-machine over Tailscale) --------------------------
+    // All OFF by default. With PeersEnabled=false esgee opens zero sockets and
+    // behaves exactly as before these settings existed.
+
+    /// <summary>Serve this machine's archive to other machines on the tailnet.
+    /// The server binds ONLY to this machine's Tailscale IP — never a public or
+    /// LAN interface — and every request must carry PeerToken.</summary>
+    public bool PeersEnabled { get; set; } = false;
+
+    /// <summary>TCP port for the peer API (on the Tailscale IP only).</summary>
+    public int PeerPort { get; set; } = 43117;
+
+    /// <summary>Shared secret for the peer API. Generated automatically the
+    /// first time PeersEnabled is turned on; copy the SAME value into
+    /// settings.json on every machine that should talk to this one.</summary>
+    public string PeerToken { get; set; } = "";
+
+    /// <summary>Manual peer list, as "name=host:port" or "host:port" entries —
+    /// a fallback for when tailscale-status discovery can't see a machine.</summary>
+    public string[] Peers { get; set; } = [];
+
+    /// <summary>When set (a tailnet machine name or "host:port"), every new
+    /// capture/recording is pushed to that peer in the background. Requires
+    /// PeerToken to match on both ends. Empty = no push sync.</summary>
+    public string SyncTargetPeer { get; set; } = "";
+
     [JsonIgnore]
     public static string Path { get; } = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

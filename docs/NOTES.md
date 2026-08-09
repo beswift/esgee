@@ -26,6 +26,9 @@ Capture/   ClipboardWatcher + HotkeyManager + OverlayWindow + CaptureController
            + FfmpegSetup — pinned, hash-verified first-run ffmpeg download
 Store/     PNG/MP4 on disk + SQLite/FTS5 index (thread-safe; WAL)
 Ocr/       Background Windows.Media.Ocr indexer
+Peers/     Opt-in machine-to-machine layer over Tailscale: PeerServer (the
+           HTTP API), PeerClient (+ discovery + peer cache), SyncQueue
+           (background push), Tailscale (CLI wrapper), PeerProtocol (DTOs)
 Ui/        ShelfWindow, ShotCard, ArchiveWindow, theme
 Interop/   Win32 + the OLE drag source
 Program.cs / UpdateService.cs — Velopack bootstrap + GitHub Releases self-update
@@ -56,6 +59,90 @@ update). First press of the record hotkey offers a one-time download of a
 pinned gyan.dev build, verified against a pinned SHA-256, into
 `%LOCALAPPDATA%\esgee\bin\`. A copy from `winget install Gyan.FFmpeg` dropped
 in that folder works too.
+
+### Peers: protocol & security model
+
+Everything peer-shaped is opt-in and additive. With `PeersEnabled: false`
+(the default) and no `SyncTargetPeer`, esgee opens **zero sockets** and the
+peer code never runs — behavior is identical to pre-peer releases.
+
+**Security model in two sentences:** reachability is tailnet membership —
+the server binds exclusively to this machine's Tailscale IPv4 (from
+`tailscale ip -4`), never `0.0.0.0`, so only devices already admitted to
+your WireGuard-encrypted tailnet can even connect. Authorization is a shared
+secret: every request must carry the `X-Esgee-Token` header matching
+`PeerToken` (generated on first enable, compared in constant time), so a
+stray tailnet device without the token gets nothing but 401s.
+
+HTTPS is deliberately absent: the tailnet link is already
+WireGuard-encrypted end to end, so TLS would add certificate management for
+zero additional confidentiality. If the tailscale CLI can't produce an
+address (not installed, logged out), the server simply doesn't start — it
+never falls back to a wider bind.
+
+**The API** (HTTP/1.1 + JSON, snake_case, `proto: 1` in /ping):
+
+```
+GET  /ping          {app, version, proto, machine, captures}
+GET  /recent?n=     newest captures (metadata list)
+GET  /search?q=     FTS5 search, same quoting rules as the archive window
+GET  /meta/{id}     one capture, including ocr_text + ocr_engine_version
+GET  /thumb/{id}    pre-scaled JPEG for grid tiles
+GET  /file/{id}     the original PNG/MP4; ?alt=gif / ?alt=thumb fetch a
+                    recording's sibling GIF / preview frame
+POST /ingest        multipart/form-data: "meta" JSON sidecar + "file" bytes
+                    (+ optional "gif"/"thumb" parts for recordings)
+```
+
+**Why a hand-rolled TcpListener responder** rather than HttpListener or
+Kestrel: `HttpListener` on a non-localhost prefix requires a netsh URL ACL —
+an admin step, unacceptable for a per-user app. Embedding Kestrel
+(`FrameworkReference: Microsoft.AspNetCore.App`) means shipping the ASP.NET
+Core framework inside every self-contained build, ballooning each full
+update by tens of MB — the same reason ffmpeg isn't bundled. Seven fixed
+routes serving one trusted client don't need a framework; the whole
+responder (incl. a minimal multipart parser) is one file. Gotcha learned en
+route: .NET's `MultipartFormDataContent` emits *unquoted* part names
+(`name=meta`) while curl quotes them — the parser accepts both.
+
+**Ingest & the versioned sidecar:** the receiver dedupes by sha256 (global,
+not time-windowed — a retried push or a pull-then-sync must land exactly
+once), writes the file into its own `yyyy\MM` tree, and **imports the OCR
+text from the sidecar instead of re-OCRing**. `ocr_engine_version` (e.g.
+`winocr/10.0.26200.0` — Windows.Media.Ocr has no version of its own, the OS
+build is the honest proxy) is stored per row, so a future, better engine can
+re-OCR selectively — only rows produced by older engines — instead of
+blindly. A sidecar with `ocr_text: null` on an image leaves `ocr_done=0`, so
+the receiver's own backlog sweep fills the hole. Rows gained two additive
+columns (`origin`, `ocr_engine_version`); sync bookkeeping is a new
+`sync_pushed` table — older app versions sharing the DB ignore all three.
+
+**Push sync (SyncQueue):** the capture pipeline's only contribution is a
+non-blocking channel write, so the hotkey → shelf path is untouched in every
+configuration. The worker waits briefly for local OCR (so sidecars carry
+text), pushes with exponential backoff when the target is offline, and a
+startup sweep enqueues anything `sync_pushed` doesn't know about — captures
+taken while the target was down, or before sync was enabled, catch up on
+their own. Shots that *originated* at the target are skipped (no echo
+loops).
+
+**Remote browsing:** the archive window's machine switcher discovers peers
+by probing `tailscale status --json` nodes for `/ping` with the token
+(manual `Peers` entries as fallback). A remote tile's thumbnail streams from
+`/thumb` off the UI thread; drag-out **must** hand CF_HDROP a real file, so
+remote files are materialized into `%LOCALAPPDATA%\esgee\peercache\<peer>\`
+— prefetched on mouse-down and on preview, so the drag is usually instant; a
+cold drag downloads inline (slower, never broken). "Pull to this PC" turns a
+remote capture into a first-class local row via the same ingest path,
+`origin` set to the source machine.
+
+**Testing with one machine:** the self-peer loopback is a supported
+configuration — the machine's own tailnet IP serves its real archive and
+shows up in its own machine switcher. `esgee --serve --archive-root <dir>
+--port <p> [--token <t>]` runs a headless receiver against a second archive
+root, `esgee --check-peer [host[:port]|name]` exercises ping → recent →
+cache download → CF_HDROP round-trip, and `--archive-root` works on every
+CLI verb.
 
 ### Why Velopack (not MSIX/AppInstaller)
 

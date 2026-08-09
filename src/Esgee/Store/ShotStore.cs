@@ -62,7 +62,30 @@ public sealed class ShotStore : IDisposable
         // throws "duplicate column name" once applied — that's the idempotence.
         TryExec("ALTER TABLE shots ADD COLUMN kind TEXT NOT NULL DEFAULT 'image'");
         TryExec("ALTER TABLE shots ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0");
+        // Peer sync: where a capture originally came from ("" = this machine),
+        // and which OCR engine produced ocr_text (the versioned-sidecar pattern —
+        // lets a future engine upgrade re-OCR selectively instead of blindly).
+        TryExec("ALTER TABLE shots ADD COLUMN origin TEXT NOT NULL DEFAULT ''");
+        TryExec("ALTER TABLE shots ADD COLUMN ocr_engine_version TEXT NOT NULL DEFAULT ''");
+        // Which shots have been pushed to which sync target. New table = additive;
+        // older app versions never touch it.
+        TryExec("""
+            CREATE TABLE IF NOT EXISTS sync_pushed (
+                shot_id   INTEGER NOT NULL,
+                target    TEXT NOT NULL,
+                pushed_at TEXT NOT NULL,
+                PRIMARY KEY (shot_id, target)
+            )
+            """);
     }
+
+    /// <summary>Quotes each term so user text can't hit FTS5 operator syntax
+    /// (AND/OR/NEAR, dashes, colons) by accident. Shared by the archive window
+    /// and the peer API so a search means the same thing locally and remotely.</summary>
+    public static string FtsQuery(string query)
+        => string.Join(" ", query
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(t => $"\"{t.Replace("\"", "\"\"")}\"*"));
 
     private void TryExec(string sql)
     {
@@ -159,7 +182,7 @@ public sealed class ShotStore : IDisposable
         {
             using var cmd = _db.CreateCommand();
             cmd.CommandText = """
-                SELECT id, path, taken_at, width, height, sha256, kind, duration_ms
+                SELECT id, path, taken_at, width, height, sha256, kind, duration_ms, origin
                 FROM shots WHERE ocr_done = 0 ORDER BY id LIMIT $n;
                 """;
             cmd.Parameters.AddWithValue("$n", limit);
@@ -167,7 +190,7 @@ public sealed class ShotStore : IDisposable
         }
     }
 
-    public void SetOcr(long id, string text)
+    public void SetOcr(long id, string text, string engineVersion = "")
     {
         lock (_gate)
         {
@@ -176,8 +199,10 @@ public sealed class ShotStore : IDisposable
             using (var cmd = _db.CreateCommand())
             {
                 cmd.Transaction = tx;
-                cmd.CommandText = "UPDATE shots SET ocr_text = $x, ocr_done = 1 WHERE id = $id;";
+                cmd.CommandText =
+                    "UPDATE shots SET ocr_text = $x, ocr_done = 1, ocr_engine_version = $v WHERE id = $id;";
                 cmd.Parameters.AddWithValue("$x", text);
+                cmd.Parameters.AddWithValue("$v", engineVersion);
                 cmd.Parameters.AddWithValue("$id", id);
                 cmd.ExecuteNonQuery();
             }
@@ -202,7 +227,7 @@ public sealed class ShotStore : IDisposable
         {
             using var cmd = _db.CreateCommand();
             cmd.CommandText = """
-                SELECT s.id, s.path, s.taken_at, s.width, s.height, s.sha256, s.kind, s.duration_ms
+                SELECT s.id, s.path, s.taken_at, s.width, s.height, s.sha256, s.kind, s.duration_ms, s.origin
                 FROM shots_fts f JOIN shots s ON s.id = f.rowid
                 WHERE shots_fts MATCH $q
                 ORDER BY rank LIMIT $n;
@@ -220,7 +245,7 @@ public sealed class ShotStore : IDisposable
         {
             using var cmd = _db.CreateCommand();
             cmd.CommandText = """
-                SELECT id, path, taken_at, width, height, sha256, kind, duration_ms
+                SELECT id, path, taken_at, width, height, sha256, kind, duration_ms, origin
                 FROM shots ORDER BY id DESC LIMIT $n;
                 """;
             cmd.Parameters.AddWithValue("$n", limit);
@@ -234,7 +259,7 @@ public sealed class ShotStore : IDisposable
     {
         using var cmd = _db.CreateCommand();
         cmd.CommandText = """
-            SELECT id, path, taken_at, width, height, sha256, kind, duration_ms
+            SELECT id, path, taken_at, width, height, sha256, kind, duration_ms, origin
             FROM shots WHERE sha256 = $s ORDER BY id DESC LIMIT 1;
             """;
         cmd.Parameters.AddWithValue("$s", sha);
@@ -248,7 +273,7 @@ public sealed class ShotStore : IDisposable
         return new Shot(
             r.GetInt64(0), r.GetString(1), takenAt,
             r.GetInt32(3), r.GetInt32(4), r.GetString(5),
-            r.GetString(6), r.GetInt64(7));
+            r.GetString(6), r.GetInt64(7), r.GetString(8));
     }
 
     /// <summary>Archive health for `esgee --doctor`: totals, OCR backlog, and
@@ -288,6 +313,167 @@ public sealed class ShotStore : IDisposable
         }
     }
 
+    /// <summary>One row by id, or null. The peer API's lookup primitive.</summary>
+    public Shot? GetById(long id)
+    {
+        lock (_gate)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = """
+                SELECT id, path, taken_at, width, height, sha256, kind, duration_ms, origin
+                FROM shots WHERE id = $id;
+                """;
+            cmd.Parameters.AddWithValue("$id", id);
+            return ReadShots(cmd).FirstOrDefault();
+        }
+    }
+
+    /// <summary>Total captures — the /ping health number.</summary>
+    public long Count()
+    {
+        lock (_gate)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM shots;";
+            return (long)(cmd.ExecuteScalar() ?? 0L);
+        }
+    }
+
+    /// <summary>OCR state for one shot: done flag, text, and the engine version
+    /// that produced it — the payload of a sync sidecar.</summary>
+    public (bool Done, string? Text, string EngineVersion) GetOcr(long id)
+    {
+        lock (_gate)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText =
+                "SELECT ocr_done, ocr_text, ocr_engine_version FROM shots WHERE id = $id;";
+            cmd.Parameters.AddWithValue("$id", id);
+            using var r = cmd.ExecuteReader();
+            if (!r.Read()) return (false, null, "");
+            return (r.GetInt64(0) != 0, r.IsDBNull(1) ? null : r.GetString(1),
+                    r.IsDBNull(2) ? "" : r.GetString(2));
+        }
+    }
+
+    /// <summary>
+    /// Files a capture that arrived from another machine (push sync or a manual
+    /// "pull to this PC"). The file is already at <paramref name="path"/> inside
+    /// this archive's tree. OCR text comes from the sender's sidecar — it is
+    /// imported, never re-run here; a sidecar with no text on an image leaves
+    /// ocr_done=0 so the local backlog sweep fills the hole. Dedupe is global by
+    /// content hash: the same capture pushed twice (retry, or pull-then-sync)
+    /// lands exactly once.
+    /// </summary>
+    public (Shot Shot, bool Duplicate) Ingest(string path, string sha256,
+        DateTimeOffset takenAt, int width, int height, string kind, long durationMs,
+        string? ocrText, string ocrEngineVersion, string origin)
+    {
+        lock (_gate)
+        {
+            using (var find = _db.CreateCommand())
+            {
+                find.CommandText = """
+                    SELECT id, path, taken_at, width, height, sha256, kind, duration_ms, origin
+                    FROM shots WHERE sha256 = $s ORDER BY id DESC LIMIT 1;
+                    """;
+                find.Parameters.AddWithValue("$s", sha256);
+                if (ReadShots(find).FirstOrDefault() is { } existing)
+                    return (existing, true);
+            }
+
+            var ocrDone = ocrText is not null || kind != "image";
+
+            using var tx = _db.BeginTransaction();
+            long id;
+            using (var cmd = _db.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = """
+                    INSERT INTO shots (path, taken_at, width, height, sha256, kind,
+                                       duration_ms, ocr_text, ocr_done, ocr_engine_version, origin)
+                    VALUES ($p, $t, $w, $h, $s, $k, $d, $x, $done, $v, $o);
+                    SELECT last_insert_rowid();
+                    """;
+                cmd.Parameters.AddWithValue("$p", path);
+                cmd.Parameters.AddWithValue("$t", takenAt.ToString("o"));
+                cmd.Parameters.AddWithValue("$w", width);
+                cmd.Parameters.AddWithValue("$h", height);
+                cmd.Parameters.AddWithValue("$s", sha256);
+                cmd.Parameters.AddWithValue("$k", kind);
+                cmd.Parameters.AddWithValue("$d", durationMs);
+                cmd.Parameters.AddWithValue("$x", (object?)ocrText ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("$done", ocrDone ? 1 : 0);
+                cmd.Parameters.AddWithValue("$v", ocrEngineVersion);
+                cmd.Parameters.AddWithValue("$o", origin);
+                id = (long)(cmd.ExecuteScalar() ?? 0L);
+            }
+
+            if (!string.IsNullOrEmpty(ocrText))
+            {
+                using var fts = _db.CreateCommand();
+                fts.Transaction = tx;
+                fts.CommandText = "INSERT INTO shots_fts(rowid, ocr_text) VALUES ($id, $x);";
+                fts.Parameters.AddWithValue("$id", id);
+                fts.Parameters.AddWithValue("$x", ocrText);
+                fts.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+            return (new Shot(id, path, takenAt, width, height, sha256, kind, durationMs, origin), false);
+        }
+    }
+
+    /// <summary>Picks a destination path inside this archive's yyyy/MM tree for
+    /// an incoming file, creating the month folder. Caller writes the bytes.</summary>
+    public string PlanIngestPath(DateTimeOffset takenAt, string extension)
+    {
+        var dir = Path.Combine(Root, takenAt.ToString("yyyy"), takenAt.ToString("MM"));
+        Directory.CreateDirectory(dir);
+        lock (_gate)
+        {
+            return Unique(Path.Combine(dir, $"{takenAt:yyyy-MM-dd_HH-mm-ss}{extension}"));
+        }
+    }
+
+    /// <summary>Shots never pushed to <paramref name="target"/>, oldest first —
+    /// the startup backlog sweep. Excludes shots that ORIGINATED at the target
+    /// (pushing those back would just bounce off its sha dedupe).</summary>
+    public List<Shot> NotPushed(string target, string targetMachine, int limit = 500)
+    {
+        lock (_gate)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = """
+                SELECT id, path, taken_at, width, height, sha256, kind, duration_ms, origin
+                FROM shots
+                WHERE id NOT IN (SELECT shot_id FROM sync_pushed WHERE target = $t)
+                  AND origin != $m
+                ORDER BY id LIMIT $n;
+                """;
+            cmd.Parameters.AddWithValue("$t", target);
+            cmd.Parameters.AddWithValue("$m", targetMachine);
+            cmd.Parameters.AddWithValue("$n", limit);
+            return ReadShots(cmd);
+        }
+    }
+
+    public void MarkPushed(long shotId, string target)
+    {
+        lock (_gate)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = """
+                INSERT OR REPLACE INTO sync_pushed (shot_id, target, pushed_at)
+                VALUES ($id, $t, $now);
+                """;
+            cmd.Parameters.AddWithValue("$id", shotId);
+            cmd.Parameters.AddWithValue("$t", target);
+            cmd.Parameters.AddWithValue("$now", DateTimeOffset.Now.ToString("o"));
+            cmd.ExecuteNonQuery();
+        }
+    }
+
     /// <summary>Cheap change token for live views: moves when rows are added,
     /// removed, or OCR completes. One scalar WAL read — safe to poll.</summary>
     public string ChangeToken()
@@ -311,7 +497,7 @@ public sealed class ShotStore : IDisposable
                 r.GetInt64(0), r.GetString(1),
                 DateTimeOffset.Parse(r.GetString(2)),
                 r.GetInt32(3), r.GetInt32(4), r.GetString(5),
-                r.GetString(6), r.GetInt64(7)));
+                r.GetString(6), r.GetInt64(7), r.GetString(8)));
         }
         return list;
     }

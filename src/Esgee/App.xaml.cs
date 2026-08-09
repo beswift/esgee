@@ -4,6 +4,7 @@ using System.Drawing.Drawing2D;
 using System.Windows;
 using Esgee.Capture;
 using Esgee.Ocr;
+using Esgee.Peers;
 using Esgee.Store;
 using Esgee.Ui;
 using Forms = System.Windows.Forms;
@@ -24,6 +25,8 @@ public partial class App : Application
     private RecordController? _record;
     private ArchiveWindow? _archive;
     private Forms.NotifyIcon _tray = null!;
+    private PeerServer? _peerServer;
+    private SyncQueue? _sync;
     private readonly UpdateService _update = new();
 
     protected override void OnStartup(StartupEventArgs e)
@@ -32,22 +35,56 @@ public partial class App : Application
 
         _settings = Settings.Load();
 
+        // Hidden global override for test harnesses and side-by-side archives:
+        // `--archive-root <path>` points ANY mode (search, serve, resident) at a
+        // different archive than settings.json names.
+        var args = e.Args.ToList();
+        if (TakeOption(args, "archive-root") is { } rootOverride)
+        {
+            _settings.ArchiveRoot = rootOverride;
+            Log.Info($"archive root overridden by CLI: {rootOverride}");
+        }
+
         // Query mode runs against the same archive and exits without a tray icon,
         // so it must be handled before the singleton check.
-        if (Cli.TryRun(e.Args, _settings))
+        if (Cli.TryRun([.. args], _settings))
         {
             Shutdown();
+            return;
+        }
+
+        // `esgee --serve`: headless peer server only — no tray, watcher, or
+        // hotkeys, and exempt from the singleton. Exists for testing the peer
+        // layer (serve a second archive root on another port) but is a real
+        // server: same code path the resident app runs.
+        if (args.Any(a => a.TrimStart('-').Equals("serve", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var port = int.TryParse(TakeOption(args, "port"), out var p) ? p : _settings.PeerPort;
+            var token = TakeOption(args, "token") ?? _settings.PeerToken;
+            _store = new ShotStore(_settings.ArchiveRoot);
+            _peerServer = PeerServer.TryStart(_store, token, port);
+            if (_peerServer is null)
+            {
+                Log.Error("serve mode: server failed to start; exiting");
+                Shutdown();
+            }
+            else
+            {
+                Log.Info($"serve mode: archive {_store.Root} on {_peerServer.BoundAddress}; " +
+                         "kill the process to stop");
+            }
             return;
         }
 
         // `esgee --archive`: just the browser window, no tray/watcher/hotkeys.
         // Deliberately exempt from the singleton — WAL mode lets it read the
         // index alongside the resident instance.
-        if (e.Args.Any(a => a.TrimStart('-').Equals("archive", StringComparison.OrdinalIgnoreCase)))
+        if (args.Any(a => a.TrimStart('-').Equals("archive", StringComparison.OrdinalIgnoreCase)))
         {
             ShutdownMode = ShutdownMode.OnLastWindowClose;
             _store = new ShotStore(_settings.ArchiveRoot);
-            new ArchiveWindow(_store, () => { }).Show();
+            new ArchiveWindow(_store, () => { }, _settings).Show();
             return;
         }
 
@@ -127,9 +164,56 @@ public partial class App : Application
             _ocr.EnqueueBacklog();
         }
 
+        StartPeers();
+
         BuildTray();
         _update.StartBackgroundChecks();
         Log.Info($"esgee v{UpdateService.CurrentVersion} up; watching clipboard, archiving to {_store.Root}");
+    }
+
+    /// <summary>Peer layer, entirely opt-in. With PeersEnabled=false and no
+    /// SyncTargetPeer this opens zero sockets and starts zero threads — the
+    /// default configuration behaves exactly like pre-peers builds.</summary>
+    private void StartPeers()
+    {
+        if (_settings.PeersEnabled && string.IsNullOrEmpty(_settings.PeerToken))
+        {
+            // First enable: mint the shared secret the user copies to the other
+            // machines' settings.json.
+            _settings.PeerToken = Convert.ToHexString(
+                System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
+            _settings.Save();
+            Log.Info("peers: generated PeerToken (copy it into settings.json on your other machines)");
+        }
+
+        if (_settings.PeersEnabled)
+        {
+            // Off the startup path: resolving the tailscale IP shells out.
+            _ = Task.Run(() => _peerServer = PeerServer.TryStart(
+                _store, _settings.PeerToken, _settings.PeerPort));
+        }
+
+        if (_settings.SyncTargetPeer.Length > 0)
+        {
+            if (string.IsNullOrEmpty(_settings.PeerToken))
+            {
+                Log.Warn("sync: SyncTargetPeer set but no PeerToken; sync disabled");
+                return;
+            }
+            _sync = new SyncQueue(_store, _settings);
+            _ = Task.Run(_sync.EnqueueBacklog);
+            Log.Info($"sync: pushing new captures to {_settings.SyncTargetPeer}");
+        }
+    }
+
+    /// <summary>Removes "--name value" from the list and returns the value.</summary>
+    private static string? TakeOption(List<string> args, string name)
+    {
+        var idx = args.FindIndex(a => a.TrimStart('-').Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (idx < 0 || idx + 1 >= args.Count) return null;
+        var value = args[idx + 1];
+        args.RemoveRange(idx, 2);
+        return value;
     }
 
     private async void OnCaptured(CapturedImage capture, bool toClipboard)
@@ -146,6 +230,7 @@ public partial class App : Application
 
             _shelf.Push(shot);
             _ocr?.Enqueue(shot);
+            _sync?.Enqueue(shot.Id); // non-blocking channel write — never delays capture
 
             if (toClipboard)
             {
@@ -178,6 +263,7 @@ public partial class App : Application
                 rec.Mp4Path, rec.Width, rec.Height, rec.StartedAt, "video", rec.DurationMs));
 
             _shelf.Push(shot);
+            _sync?.Enqueue(shot.Id);
 
             // CF_HDROP with the GIF when there is one (the paste-anywhere pick),
             // else the MP4 — same choice DragSource makes for drag-out.
@@ -200,7 +286,7 @@ public partial class App : Application
             return;
         }
 
-        _archive = new ArchiveWindow(_store, () => _watcher.IgnoreNextChange());
+        _archive = new ArchiveWindow(_store, () => _watcher.IgnoreNextChange(), _settings);
         _archive.Show();
     }
 
@@ -229,6 +315,27 @@ public partial class App : Application
 
         menu.Items.Add("Search archive…", null, (_, _) => OpenArchiveWindow());
         menu.Items.Add("Open archive folder", null, (_, _) => OpenArchive());
+
+        // Peer/sync state, read-only. Text refreshes each time the menu opens —
+        // cheaper and simpler than pushing every queue tick into the tray.
+        if (_settings.PeersEnabled || _sync is not null)
+        {
+            var status = new Forms.ToolStripMenuItem { Enabled = false };
+            void RefreshStatus()
+            {
+                var serving = _peerServer is not null ? $"serving on {_peerServer.BoundAddress}" : null;
+                var syncing = _sync is not null
+                    ? $"sync to {_sync.Target}: " + (_sync.Offline
+                        ? $"offline, {_sync.Pending} queued"
+                        : _sync.Pending > 0 ? $"{_sync.Pending} pending" : "up to date")
+                    : null;
+                status.Text = Truncate(string.Join("  ·  ",
+                    new[] { serving, syncing }.Where(s => s is not null)), 100);
+            }
+            RefreshStatus();
+            menu.Opening += (_, _) => RefreshStatus();
+            menu.Items.Add(status);
+        }
         menu.Items.Add("Clear shelf", null, (_, _) => _shelf.ClearAll());
         menu.Items.Add(new Forms.ToolStripSeparator());
 
@@ -405,6 +512,8 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         _record?.Dispose(); // finalizes any in-flight ffmpeg so the MP4 survives
+        _peerServer?.Dispose();
+        _sync?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
         _ocr?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
         _hotkey?.Dispose();
         _watcher?.Dispose();

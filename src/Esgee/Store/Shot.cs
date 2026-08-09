@@ -1,7 +1,9 @@
 namespace Esgee.Store;
 
 /// <summary>One capture, already durable on disk by the time this exists.
-/// <paramref name="Kind"/> is "image" (PNG) or "video" (MP4 recording).</summary>
+/// <paramref name="Kind"/> is "image" (PNG) or "video" (MP4 recording).
+/// <paramref name="Origin"/> is "" for captures taken on this machine, or the
+/// name of the machine a synced/pulled capture originally came from.</summary>
 public sealed record Shot(
     long Id,
     string Path,
@@ -10,7 +12,8 @@ public sealed record Shot(
     int Height,
     string Sha256,
     string Kind = "image",
-    long DurationMs = 0)
+    long DurationMs = 0,
+    string Origin = "")
 {
     public string FileName => System.IO.Path.GetFileName(Path);
 

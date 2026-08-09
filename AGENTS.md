@@ -18,6 +18,11 @@ tools. Captures are plain PNG/MP4/GIF under `%USERPROFILE%\esgee\yyyy\MM\`.
 The index lives beside them (`index.db`, SQLite/FTS5, WAL — safe to read while
 the app runs).
 
+Every verb accepts `--archive-root <path>` to target a different archive.
+With peers enabled (see README "Peers & sync"), other machines' archives are
+one authenticated HTTP hop away: `GET http://<tailscale-ip>:43117/search?q=…`
+with the `X-Esgee-Token` header from settings.json.
+
 ## Working on the codebase
 
 - **Stack:** C# / .NET 10, WPF, single project at `src/Esgee/`. Build with
@@ -43,6 +48,13 @@ the app runs).
   explicitly. Beware: a capture appearing in the archive does not prove
   *your* code path ran — the clipboard watcher catches captures from any
   tool. Check for the specific log lines.
+- **Peer layer testing needs no second machine.** The self-peer loopback is
+  supported: enable peers, and this machine appears in its own archive
+  switcher. `esgee --serve --archive-root <dir> --port <p>` runs a headless
+  receiver on a scratch archive; `esgee --check-peer` proves the remote-drag
+  path end to end (ping → recent → cache download → CF_HDROP round-trip).
+  Peer traffic logs as `peers:` (server side) and `peer <name>:` (client
+  side) in esgee.log — assert on those lines, not on files appearing.
 - **Releases:** push a `v*` tag; `.github/workflows/release.yml` builds,
   packages (Velopack `vpk`), and publishes. Version comes from the tag —
   don't hardcode versions in the csproj (local builds intentionally report

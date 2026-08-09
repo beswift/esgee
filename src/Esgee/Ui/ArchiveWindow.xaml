@@ -11,9 +11,21 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Search bar. The placeholder doubles as the how-to. -->
+        <!-- Search bar. The placeholder doubles as the how-to. The machine
+             switcher only appears once a PeerToken is configured — with peers
+             off this row looks exactly as it always has. -->
         <Grid Grid.Row="0" Margin="16,14,16,10">
-            <Border Background="{StaticResource Surface}"
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <ComboBox x:Name="MachineBox" Grid.Column="0" MinWidth="130"
+                      Margin="0,0,10,0" VerticalAlignment="Stretch"
+                      Visibility="Collapsed" FontSize="13"
+                      SelectionChanged="OnMachineChanged" />
+
+            <Border Grid.Column="1" Background="{StaticResource Surface}"
                     BorderBrush="{StaticResource Hairline}" BorderThickness="1"
                     CornerRadius="9">
                 <Grid>
@@ -112,6 +124,10 @@
                             <TextBlock Text="‹ › navigate   Esc close" Margin="0,0,14,0"
                                        VerticalAlignment="Center" FontSize="11"
                                        Foreground="{StaticResource InkMuted}" Opacity="0.7" />
+                            <Button x:Name="PreviewPullBtn" Style="{StaticResource IconButton}"
+                                    Content="&#xE896;" FontFamily="Segoe Fluent Icons"
+                                    ToolTip="Pull to this PC" Click="OnPreviewPull"
+                                    Visibility="Collapsed" />
                             <Button x:Name="PreviewCopyBtn" Style="{StaticResource IconButton}"
                                     Content="&#xE8C8;" FontFamily="Segoe Fluent Icons"
                                     ToolTip="Copy to clipboard" Click="OnPreviewCopy" />

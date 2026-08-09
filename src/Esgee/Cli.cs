@@ -23,10 +23,16 @@ internal static partial class Cli
         if (args.Length == 0) return false;
 
         var verb = args[0].TrimStart('-').ToLowerInvariant();
-        if (verb is not ("search" or "recent" or "check-drag" or "doctor")) return false;
+        if (verb is not ("search" or "recent" or "check-drag" or "doctor" or "check-peer")) return false;
 
         // WinExe has no console of its own; borrow the calling shell's.
         AttachConsole(AttachParentProcess);
+
+        if (verb == "check-peer")
+        {
+            CheckPeer(settings, args.Length > 1 ? args[1] : null);
+            return true;
+        }
 
         try
         {
@@ -109,6 +115,77 @@ internal static partial class Cli
         Console.WriteLine($"log: {lines.Length} lines, {errors.Count} errors, {warns.Count} warnings");
         foreach (var e in errors.TakeLast(5)) Console.WriteLine($"  {e}");
         foreach (var w in warns.TakeLast(5)) Console.WriteLine($"  {w}");
+    }
+
+    /// <summary>
+    /// Diagnostic for the peer layer: `esgee --check-peer [host[:port] | name]`.
+    /// Exercises the EXACT components a remote archive-tile drag uses — /ping,
+    /// /recent, EnsureLocalAsync's cache download, DragSource.BuildDataObject —
+    /// then round-trips the payload through the OS clipboard like --check-drag.
+    /// If CF_HDROP comes back naming a file that exists in the peer cache, a
+    /// drag of that remote tile hands a drop target a real local file.
+    /// </summary>
+    private static void CheckPeer(Settings settings, string? target)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(settings.PeerToken))
+            {
+                Console.WriteLine("no PeerToken in settings — enable peers first");
+                return;
+            }
+
+            var host = target;
+            var port = settings.PeerPort;
+            if (host is null)
+            {
+                host = Task.Run(() => Peers.Tailscale.SelfIPv4()).GetAwaiter().GetResult();
+                if (host is null) { Console.WriteLine("no tailscale IP found"); return; }
+            }
+            var colon = host.LastIndexOf(':');
+            if (colon > 0 && int.TryParse(host[(colon + 1)..], out var p))
+            {
+                port = p;
+                host = host[..colon];
+            }
+            if (!System.Net.IPAddress.TryParse(host, out _))
+            {
+                var node = Peers.Tailscale.Nodes().FirstOrDefault(n =>
+                    n.HostName.Equals(host, StringComparison.OrdinalIgnoreCase));
+                if (node is null) { Console.WriteLine($"'{host}' is not on the tailnet"); return; }
+                host = node.Ip;
+            }
+
+            using var client = new Peers.PeerClient(
+                new Peers.PeerInfo(target ?? "self", host, port), settings.PeerToken);
+
+            var ping = Task.Run(() => client.PingAsync(TimeSpan.FromSeconds(5)))
+                .GetAwaiter().GetResult();
+            Console.WriteLine($"peer   : {ping!.Machine} v{ping.Version} " +
+                              $"(proto {ping.Proto}, {ping.Captures} captures) at {host}:{port}");
+
+            var recent = Task.Run(() => client.RecentAsync(1)).GetAwaiter().GetResult();
+            if (recent.Count == 0) { Console.WriteLine("peer archive is empty"); return; }
+
+            var dto = recent[0];
+            var local = Task.Run(() => client.EnsureLocalAsync(dto)).GetAwaiter().GetResult();
+            Console.WriteLine($"cached : {local.Path} " +
+                              $"({new System.IO.FileInfo(local.Path).Length / 1024} KB)");
+
+            var data = Interop.DragSource.BuildDataObject(local);
+            System.Windows.Clipboard.SetDataObject(data, copy: true);
+            var back = System.Windows.Clipboard.GetDataObject();
+            var files = back?.GetData(System.Windows.DataFormats.FileDrop) as string[];
+            var dropped = files is { Length: > 0 } ? files[0] : null;
+            Console.WriteLine($"CF_HDROP : {dropped ?? "MISSING"}");
+            Console.WriteLine(dropped is not null && File.Exists(dropped)
+                ? "OK: drop target would receive a real local file"
+                : "FAIL: CF_HDROP missing or file does not exist");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"check-peer failed: {ex.Message}");
+        }
     }
 
     /// <summary>

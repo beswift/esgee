@@ -15,7 +15,9 @@ text that was on screen**.
 - **Instant repeats** — re-shoot your last region with one key while you
   iterate on a UI.
 
-Local-first: nothing leaves your machine.
+Local-first: nothing leaves your machine unless you enable
+[Peers](#peers--sync) — and then data moves only between your own machines,
+inside your own tailnet.
 
 ## Install
 
@@ -55,6 +57,39 @@ the clipboard.
   a digest of the local log. Runs entirely offline; paste it into bug reports.
 
 Captures live in `%USERPROFILE%\esgee\yyyy\MM\` as ordinary PNG/MP4 files.
+
+## Peers & sync
+
+**Off by default.** When enabled, your machines can browse and copy each
+other's archives — data moves only inside your private
+[Tailscale](https://tailscale.com) tailnet, authenticated with a shared token,
+and never touches any other network. Requires Tailscale running on each
+machine; the tailnet link is WireGuard-encrypted, so the API is plain HTTP on
+the Tailscale interface (never `0.0.0.0`, never the LAN).
+
+To set up (edit `%LOCALAPPDATA%\esgee\settings.json`, then restart esgee):
+
+1. On your first machine set `"PeersEnabled": true` and restart. esgee
+   generates a `PeerToken` and writes it back to settings.json.
+2. Copy that exact `PeerToken` value into settings.json on each other
+   machine, set `"PeersEnabled": true` there too, restart.
+3. Done. The archive window grows a machine switcher (This PC + every peer
+   that answers). Browse, search, and preview a peer's captures exactly like
+   local ones; drag a remote tile out and it downloads first, then drops as a
+   real file. Right-click → **Pull to this PC** copies a capture into the
+   local archive for keeps (marked with its origin machine).
+
+Optional push sync: set `"SyncTargetPeer": "<machine-name>"` (a tailnet
+hostname, or `host:port`) on a machine and every new capture is pushed to
+that peer in the background — queued and retried when it's offline, deduped
+by content hash on arrival, with the OCR text shipped alongside so the
+receiver never re-OCRs. The tray menu shows sync state.
+
+Settings reference: `PeersEnabled` (default false), `PeerToken` (shared
+secret, same on every machine), `PeerPort` (default 43117), `Peers` (manual
+`name=host:port` fallback list if tailnet discovery can't see a machine),
+`SyncTargetPeer` (empty = no push). Protocol details and the security model
+live in [docs/NOTES.md](docs/NOTES.md).
 
 ## For agents
 

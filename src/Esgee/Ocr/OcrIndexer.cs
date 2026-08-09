@@ -26,6 +26,12 @@ public sealed class OcrIndexer : IAsyncDisposable
 
     public bool Available => _engine is not null;
 
+    /// <summary>Which engine produced a given ocr_text — recorded per shot and
+    /// carried in sync sidecars, so a future better engine can re-OCR only the
+    /// rows an older engine produced. Windows.Media.Ocr has no version of its
+    /// own; the OS build is the honest proxy.</summary>
+    public static string EngineVersion { get; } = $"winocr/{Environment.OSVersion.Version}";
+
     public OcrIndexer(ShotStore store)
     {
         _store = store;
@@ -61,7 +67,7 @@ public sealed class OcrIndexer : IAsyncDisposable
                 try
                 {
                     var text = await RecognizeAsync(shot.Path);
-                    _store.SetOcr(shot.Id, text);
+                    _store.SetOcr(shot.Id, text, EngineVersion);
                 }
                 catch (Exception ex)
                 {
