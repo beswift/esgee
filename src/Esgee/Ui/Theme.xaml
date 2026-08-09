@@ -18,6 +18,156 @@
     <!-- Standard easing for everything that moves, so the app feels like one object. -->
     <CubicEase x:Key="EaseOut" EasingMode="EaseOut" />
 
+    <!-- Slim dark scrollbars, applied app-wide: the stock Windows scrollbar is
+         a slab of light gray that shouts over the glass. -->
+    <Style TargetType="ScrollBar">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Width" Value="8" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollBar">
+                    <Grid Background="Transparent">
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.Thumb>
+                                <Thumb>
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border x:Name="ThumbBody" CornerRadius="4"
+                                                    Background="#3A3A44" Margin="1" />
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="ThumbBody"
+                                                            Property="Background" Value="#4E4E5A" />
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                        </Track>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="Orientation" Value="Horizontal">
+                <Setter Property="Width" Value="Auto" />
+                <Setter Property="Height" Value="8" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ScrollBar">
+                            <Grid Background="Transparent">
+                                <Track x:Name="PART_Track">
+                                    <Track.Thumb>
+                                        <Thumb>
+                                            <Thumb.Template>
+                                                <ControlTemplate TargetType="Thumb">
+                                                    <Border x:Name="ThumbBody" CornerRadius="4"
+                                                            Background="#3A3A44" Margin="1" />
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter TargetName="ThumbBody"
+                                                                    Property="Background" Value="#4E4E5A" />
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Thumb.Template>
+                                        </Thumb>
+                                    </Track.Thumb>
+                                </Track>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Glass dropdown (the archive's machine switcher): same surface, hairline,
+         and radius as the search bar it sits beside. -->
+    <Style x:Key="GlassComboItem" TargetType="ComboBoxItem">
+        <Setter Property="Foreground" Value="{StaticResource Ink}" />
+        <Setter Property="Padding" Value="12,7" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="Bg" CornerRadius="6" Margin="4,1"
+                            Background="Transparent" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Bg" Property="Background"
+                                    Value="{StaticResource SurfaceHover}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="#2E3A5C" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="GlassCombo" TargetType="ComboBox">
+        <Setter Property="Foreground" Value="{StaticResource Ink}" />
+        <Setter Property="ItemContainerStyle" Value="{StaticResource GlassComboItem}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <Grid>
+                        <Border x:Name="Body" Background="{StaticResource Surface}"
+                                BorderBrush="{StaticResource Hairline}" BorderThickness="1"
+                                CornerRadius="9">
+                            <Grid Margin="12,0,10,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter Grid.Column="0"
+                                                  Content="{TemplateBinding SelectionBoxItem}"
+                                                  VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <TextBlock Grid.Column="1" Text="&#xE70D;"
+                                           FontFamily="Segoe Fluent Icons" FontSize="10"
+                                           Foreground="{StaticResource InkMuted}"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+
+                        <!-- Invisible full-surface toggle so the whole control opens. -->
+                        <ToggleButton IsChecked="{Binding IsDropDownOpen, Mode=TwoWay,
+                                          RelativeSource={RelativeSource TemplatedParent}}"
+                                      Focusable="False" Opacity="0" Background="Transparent" />
+
+                        <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
+                               VerticalOffset="4" AllowsTransparency="True"
+                               PopupAnimation="Fade" StaysOpen="False">
+                            <Border Background="#1F1F25"
+                                    BorderBrush="{StaticResource Hairline}" BorderThickness="1"
+                                    CornerRadius="10" Padding="0,5"
+                                    MinWidth="{TemplateBinding ActualWidth}"
+                                    MaxHeight="320">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <ItemsPresenter />
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Body" Property="Background"
+                                    Value="{StaticResource SurfaceHover}" />
+                        </Trigger>
+                        <Trigger Property="IsDropDownOpen" Value="True">
+                            <Setter TargetName="Body" Property="BorderBrush"
+                                    Value="{StaticResource Accent}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="IconButton" TargetType="Button">
         <Setter Property="Width" Value="26" />
         <Setter Property="Height" Value="26" />
