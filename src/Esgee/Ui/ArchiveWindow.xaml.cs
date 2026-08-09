@@ -43,6 +43,13 @@ public partial class ArchiveWindow : Window
         _settings = settings;
         _beforeClipboardWrite = beforeClipboardWrite;
 
+        // Every window announces its provenance. When a stale window from an
+        // old process is mistaken for the current build ("the switcher is
+        // gone?"), this line names the binary that actually drew it.
+        Log.Info($"archive window: v{UpdateService.CurrentVersion} " +
+                 $"from {AppContext.BaseDirectory}, " +
+                 $"peer token {(string.IsNullOrEmpty(settings.PeerToken) ? "absent" : "present")}");
+
         // Search-as-you-type, but not query-per-keystroke.
         _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _debounce.Tick += (_, _) => { _debounce.Stop(); Refresh(); };
