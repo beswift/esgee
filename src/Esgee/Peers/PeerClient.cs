@@ -172,6 +172,33 @@ public sealed class PeerClient : IDisposable
     /// </summary>
     public static async Task<List<(PeerInfo Info, PingDto Ping)>> DiscoverAsync(Settings settings)
     {
+        var probes = CandidatePeers(settings)
+            .Select(async info =>
+            {
+                using var client = new PeerClient(info, settings.PeerToken);
+                try
+                {
+                    var ping = await client.PingAsync(TimeSpan.FromSeconds(2));
+                    return ping is { App: "esgee" } ? (info, ping) : ((PeerInfo, PingDto)?)null;
+                }
+                catch
+                {
+                    return null; // not running esgee peers, or offline — fine
+                }
+            })
+            .ToList();
+
+        var results = await Task.WhenAll(probes);
+        var found = results.Where(r => r is not null).Select(r => r!.Value).ToList();
+        Log.Info($"peers: discovery probed {probes.Count} candidates, found {found.Count}");
+        return found;
+    }
+
+    /// <summary>Everywhere a peer might live: online tailnet nodes (self
+    /// included — the loopback config is supported) plus manual Settings.Peers
+    /// entries, deduped by address. Shared by discovery and pairing.</summary>
+    public static List<PeerInfo> CandidatePeers(Settings settings)
+    {
         var candidates = new List<PeerInfo>();
 
         foreach (var node in Tailscale.Nodes().Where(n => n.Online))
@@ -194,27 +221,53 @@ public sealed class PeerClient : IDisposable
             candidates.Add(new PeerInfo(name, addr, port));
         }
 
-        var probes = candidates
-            .DistinctBy(c => $"{c.Host}:{c.Port}")
-            .Select(async info =>
-            {
-                using var client = new PeerClient(info, settings.PeerToken);
-                try
-                {
-                    var ping = await client.PingAsync(TimeSpan.FromSeconds(2));
-                    return ping is { App: "esgee" } ? (info, ping) : ((PeerInfo, PingDto)?)null;
-                }
-                catch
-                {
-                    return null; // not running esgee peers, or offline — fine
-                }
-            })
-            .ToList();
+        return candidates.DistinctBy(c => $"{c.Host}:{c.Port}").ToList();
+    }
 
-        var results = await Task.WhenAll(probes);
-        var found = results.Where(r => r is not null).Select(r => r!.Value).ToList();
-        Log.Info($"peers: discovery probed {probes.Count} candidates, found {found.Count}");
-        return found;
+    // ---- pairing ------------------------------------------------------------
+
+    public enum PairOutcome
+    {
+        Paired,
+        WrongPin,    // a pairing window IS open over there, but the PIN missed
+        NoPairing,   // offline, not esgee, or no pairing window open
+    }
+
+    public sealed record PairAttempt(PairOutcome Outcome, PairResult? Result, PeerInfo Peer);
+
+    /// <summary>One POST /pair to one candidate. No token header — the PIN is
+    /// the credential; the token is what comes back. Never logs either value.</summary>
+    public static async Task<PairAttempt> TryPairAsync(PeerInfo peer, string pin, TimeSpan timeout)
+    {
+        using var http = new HttpClient { Timeout = timeout };
+        try
+        {
+            var body = new StringContent(
+                JsonSerializer.Serialize(new PairRequest(pin, Environment.MachineName), PeerProtocol.Json),
+                System.Text.Encoding.UTF8, "application/json");
+            using var resp = await http.PostAsync($"{peer.BaseUrl}/pair", body);
+
+            if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                // Only a live pairing session says "wrong pin". A pre-pairing
+                // esgee answers every tokenless request 401 with a different
+                // error — that's NoPairing, not a missed PIN.
+                var text = await resp.Content.ReadAsStringAsync();
+                return new(text.Contains("wrong pin") ? PairOutcome.WrongPin
+                    : PairOutcome.NoPairing, null, peer);
+            }
+            if (!resp.IsSuccessStatusCode)
+                return new(PairOutcome.NoPairing, null, peer);
+
+            var result = await resp.Content.ReadFromJsonAsync<PairResult>(PeerProtocol.Json);
+            return result is { Token.Length: > 0 }
+                ? new(PairOutcome.Paired, result, peer)
+                : new(PairOutcome.NoPairing, null, peer);
+        }
+        catch
+        {
+            return new(PairOutcome.NoPairing, null, peer); // unreachable — fine
+        }
     }
 
     private static string Sanitize(string name)

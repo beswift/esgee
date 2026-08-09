@@ -67,17 +67,34 @@ and never touches any other network. Requires Tailscale running on each
 machine; the tailnet link is WireGuard-encrypted, so the API is plain HTTP on
 the Tailscale interface (never `0.0.0.0`, never the LAN).
 
-To set up (edit `%LOCALAPPDATA%\esgee\settings.json`, then restart esgee):
+To connect two machines (Bluetooth-style, no settings editing):
 
-1. On your first machine set `"PeersEnabled": true` and restart. esgee
-   generates a `PeerToken` and writes it back to settings.json.
-2. Copy that exact `PeerToken` value into settings.json on each other
-   machine, set `"PeersEnabled": true` there too, restart.
-3. Done. The archive window grows a machine switcher (This PC + every peer
-   that answers). Browse, search, and preview a peer's captures exactly like
-   local ones; drag a remote tile out and it downloads first, then drops as a
-   real file. Right-click → **Pull to this PC** copies a capture into the
-   local archive for keeps (marked with its origin machine).
+1. On one machine: tray → **Peers** → **"Pair a new machine…"**. A window
+   shows a 6-digit PIN with a 2-minute fuse. First use turns peers on and
+   generates the shared token automatically.
+2. On the other machine: tray → **Peers** → **"Pair with another
+   machine…"**, type the PIN. It finds the first machine over the tailnet,
+   receives the token, and switches peers on — live immediately, no restart.
+3. Repeat for each additional machine (pair it with any machine that's
+   already in). The Peers menu shows current state ("Peers: on (N
+   machines)") and has a **Disable peers** switch; disabling closes every
+   socket but keeps the token, so re-pairing is instant.
+
+Once paired, the archive window grows a machine switcher (This PC + every
+peer that answers). Browse, search, and preview a peer's captures exactly
+like local ones; drag a remote tile out and it downloads first, then drops
+as a real file. Right-click → **Pull to this PC** copies a capture into the
+local archive for keeps (marked with its origin machine).
+
+<details>
+<summary>Manual pairing (headless machines / no tray)</summary>
+
+The PIN flow just automates the shared secret. To do it by hand: on a paired
+machine copy `PeerToken` out of `%LOCALAPPDATA%\esgee\settings.json`; on the
+new machine paste that exact value in, set `"PeersEnabled": true`, and
+restart esgee. This is also the escape hatch for boxes running only
+`esgee --serve`.
+</details>
 
 Optional push sync: set `"SyncTargetPeer": "<machine-name>"` (a tailnet
 hostname, or `host:port`) on a machine and every new capture is pushed to

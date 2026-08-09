@@ -58,3 +58,12 @@ public sealed record IngestMeta(
     string? FileName);
 
 public sealed record IngestResult(long Id, bool Duplicate);
+
+/// <summary>POST /pair body: the PIN currently on the target machine's screen
+/// plus the requesting machine's name (so the pairing window can say who
+/// joined). This is the one route that authenticates by PIN, not token.</summary>
+public sealed record PairRequest(string Pin, string Machine);
+
+/// <summary>Successful /pair response: the real PeerToken plus the issuing
+/// machine's name. The only route that ever transmits the token.</summary>
+public sealed record PairResult(string Token, string Machine);

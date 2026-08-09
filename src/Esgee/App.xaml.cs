@@ -26,7 +26,12 @@ public partial class App : Application
     private ArchiveWindow? _archive;
     private Forms.NotifyIcon _tray = null!;
     private PeerServer? _peerServer;
+    private Task<PeerServer?>? _serverTask;
     private SyncQueue? _sync;
+    private PairingWindow? _pairingWindow;
+    private PairingEnterWindow? _pairingEnter;
+    private int _lastPeerCount = -1;
+    private DateTime _lastPeerCountAt = DateTime.MinValue;
     private readonly UpdateService _update = new();
 
     protected override void OnStartup(StartupEventArgs e)
@@ -189,8 +194,7 @@ public partial class App : Application
         if (_settings.PeersEnabled)
         {
             // Off the startup path: resolving the tailscale IP shells out.
-            _ = Task.Run(() => _peerServer = PeerServer.TryStart(
-                _store, _settings.PeerToken, _settings.PeerPort));
+            _ = EnsureServerAsync();
         }
 
         if (_settings.SyncTargetPeer.Length > 0)
@@ -204,6 +208,37 @@ public partial class App : Application
             _ = Task.Run(_sync.EnqueueBacklog);
             Log.Info($"sync: pushing new captures to {_settings.SyncTargetPeer}");
         }
+    }
+
+    /// <summary>Starts the peer server exactly once, off the UI thread (TryStart
+    /// shells out for the tailscale IP). UI-thread callers only, so the
+    /// task/field handoff is race-free. A failed start (tailscale down, port
+    /// taken) clears the task so a later call — e.g. the user clicking "Pair a
+    /// new machine…" after starting Tailscale — retries cleanly.</summary>
+    private async Task<PeerServer?> EnsureServerAsync()
+    {
+        if (_peerServer is not null) return _peerServer;
+        if (_serverTask is null)
+        {
+            var token = _settings.PeerToken;
+            var port = _settings.PeerPort;
+            _serverTask = Task.Run(() => PeerServer.TryStart(_store, token, port));
+        }
+
+        var server = await _serverTask;
+        if (server is null) _serverTask = null; // allow retry
+        else _peerServer ??= server;
+        return _peerServer;
+    }
+
+    /// <summary>Tears the peer server down (pairing window included). The token
+    /// always survives a disable so re-enabling doesn't force a re-pair.</summary>
+    private void StopServer()
+    {
+        _pairingWindow?.Close();
+        _peerServer?.Dispose();
+        _peerServer = null;
+        _serverTask = null;
     }
 
     /// <summary>Removes "--name value" from the list and returns the value.</summary>
@@ -315,27 +350,7 @@ public partial class App : Application
 
         menu.Items.Add("Search archive…", null, (_, _) => OpenArchiveWindow());
         menu.Items.Add("Open archive folder", null, (_, _) => OpenArchive());
-
-        // Peer/sync state, read-only. Text refreshes each time the menu opens —
-        // cheaper and simpler than pushing every queue tick into the tray.
-        if (_settings.PeersEnabled || _sync is not null)
-        {
-            var status = new Forms.ToolStripMenuItem { Enabled = false };
-            void RefreshStatus()
-            {
-                var serving = _peerServer is not null ? $"serving on {_peerServer.BoundAddress}" : null;
-                var syncing = _sync is not null
-                    ? $"sync to {_sync.Target}: " + (_sync.Offline
-                        ? $"offline, {_sync.Pending} queued"
-                        : _sync.Pending > 0 ? $"{_sync.Pending} pending" : "up to date")
-                    : null;
-                status.Text = Truncate(string.Join("  ·  ",
-                    new[] { serving, syncing }.Where(s => s is not null)), 100);
-            }
-            RefreshStatus();
-            menu.Opening += (_, _) => RefreshStatus();
-            menu.Items.Add(status);
-        }
+        menu.Items.Add(BuildPeersMenu(menu));
         menu.Items.Add("Clear shelf", null, (_, _) => _shelf.ClearAll());
         menu.Items.Add(new Forms.ToolStripSeparator());
 
@@ -384,6 +399,170 @@ public partial class App : Application
             ContextMenuStrip = menu
         };
         _tray.DoubleClick += (_, _) => OpenArchiveWindow();
+    }
+
+    /// <summary>The Peers submenu: live on/off state, the two halves of PIN
+    /// pairing, and the off switch. State text refreshes each time the tray
+    /// menu opens; the machine count comes from a throttled background
+    /// discovery so opening the menu never blocks on the network.</summary>
+    private Forms.ToolStripMenuItem BuildPeersMenu(Forms.ContextMenuStrip menu)
+    {
+        var root = new Forms.ToolStripMenuItem("Peers");
+        var state = new Forms.ToolStripMenuItem("Peers: off") { Enabled = false };
+        var detail = new Forms.ToolStripMenuItem { Enabled = false, Visible = false };
+        var pairHost = new Forms.ToolStripMenuItem("Pair a new machine…");
+        var pairJoin = new Forms.ToolStripMenuItem("Pair with another machine…");
+        var disable = new Forms.ToolStripMenuItem("Disable peers");
+
+        pairHost.Click += async (_, _) => await OpenPairNewMachineAsync();
+        pairJoin.Click += (_, _) => OpenPairWithMachine();
+        disable.Click += (_, _) => DisablePeers();
+
+        root.DropDownItems.Add(state);
+        root.DropDownItems.Add(detail);
+        root.DropDownItems.Add(new Forms.ToolStripSeparator());
+        root.DropDownItems.Add(pairHost);
+        root.DropDownItems.Add(pairJoin);
+        root.DropDownItems.Add(new Forms.ToolStripSeparator());
+        root.DropDownItems.Add(disable);
+
+        void SetStateText()
+        {
+            state.Text = !_settings.PeersEnabled ? "Peers: off"
+                : _lastPeerCount switch
+                {
+                    < 0 => "Peers: on",
+                    1 => "Peers: on (1 machine)",
+                    var n => $"Peers: on ({n} machines)",
+                };
+        }
+
+        void RefreshStatus()
+        {
+            SetStateText();
+            disable.Enabled = _settings.PeersEnabled;
+
+            var serving = _peerServer is not null ? $"serving on {_peerServer.BoundAddress}" : null;
+            var syncing = _sync is not null
+                ? $"sync to {_sync.Target}: " + (_sync.Offline
+                    ? $"offline, {_sync.Pending} queued"
+                    : _sync.Pending > 0 ? $"{_sync.Pending} pending" : "up to date")
+                : null;
+            var text = string.Join("  ·  ", new[] { serving, syncing }.Where(s => s is not null));
+            detail.Text = Truncate(text, 100);
+            detail.Visible = text.Length > 0;
+
+            // Count reachable archives in the background (throttled — discovery
+            // probes the tailnet). The label updates in place when it lands.
+            if (_settings.PeersEnabled && _settings.PeerToken.Length > 0 &&
+                DateTime.UtcNow - _lastPeerCountAt > TimeSpan.FromSeconds(20))
+            {
+                _lastPeerCountAt = DateTime.UtcNow;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var found = await PeerClient.DiscoverAsync(_settings);
+                        _lastPeerCount = found.Count;
+                        await Dispatcher.BeginInvoke(SetStateText);
+                    }
+                    catch { /* count stays stale — harmless */ }
+                });
+            }
+        }
+
+        RefreshStatus();
+        menu.Opening += (_, _) => RefreshStatus();
+        return root;
+    }
+
+    /// <summary>"Pair a new machine…": this machine shows the PIN. First use is
+    /// the enable switch — it mints the token, flips PeersEnabled, and brings
+    /// the server up, all without touching settings.json by hand.</summary>
+    private async Task OpenPairNewMachineAsync()
+    {
+        try
+        {
+            if (_pairingWindow is { IsLoaded: true })
+            {
+                _pairingWindow.Activate();
+                return;
+            }
+
+            if (string.IsNullOrEmpty(_settings.PeerToken))
+            {
+                _settings.PeerToken = Convert.ToHexString(
+                    System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
+                Log.Info("peers: generated PeerToken (first pairing)");
+            }
+            if (!_settings.PeersEnabled)
+            {
+                _settings.PeersEnabled = true;
+                Log.Info("peers: enabled (first pairing)");
+            }
+            _settings.Save();
+
+            var server = await EnsureServerAsync();
+            if (server is null)
+            {
+                MessageBox.Show(
+                    "Pairing needs Tailscale running on this machine — the peer API " +
+                    "binds only to the Tailscale address.\n\nStart Tailscale and try " +
+                    "again; esgee.log has details.",
+                    "esgee — pairing", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            _pairingWindow = new PairingWindow(new PairingSession(), server);
+            _pairingWindow.Show();
+            _pairingWindow.Activate();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"peers: pairing window failed: {ex}");
+        }
+    }
+
+    /// <summary>"Pair with another machine…": this machine types the PIN.</summary>
+    private void OpenPairWithMachine()
+    {
+        if (_pairingEnter is { IsLoaded: true })
+        {
+            _pairingEnter.Activate();
+            return;
+        }
+        _pairingEnter = new PairingEnterWindow(_settings, ApplyPairedToken);
+        _pairingEnter.Show();
+        _pairingEnter.Activate();
+    }
+
+    /// <summary>A pairing succeeded: persist the received token, flip peers on,
+    /// and bring the server up (or bounce it onto the new token) in-process —
+    /// the running app is fully paired with no restart.</summary>
+    private void ApplyPairedToken(PairResult pair)
+    {
+        var tokenChanged = !string.Equals(_settings.PeerToken, pair.Token, StringComparison.Ordinal);
+        _settings.PeerToken = pair.Token;
+        _settings.PeersEnabled = true;
+        _settings.Save();
+        Log.Info($"peers: paired with '{pair.Machine}' — peers enabled, token " +
+                 (tokenChanged ? "adopted" : "unchanged") + ", settings saved");
+
+        if (tokenChanged && (_peerServer is not null || _serverTask is not null))
+            StopServer(); // old token is dead; restart on the adopted one
+        _ = EnsureServerAsync();
+        _lastPeerCountAt = DateTime.MinValue; // next menu open recounts
+    }
+
+    /// <summary>Peers off: server (and any open pairing window) down, zero
+    /// sockets again. The token is kept so pairing again is instant.</summary>
+    private void DisablePeers()
+    {
+        _settings.PeersEnabled = false;
+        _settings.Save();
+        StopServer();
+        _lastPeerCount = -1;
+        Log.Info("peers: disabled from tray (token kept; pair again any time)");
     }
 
     /// <summary>Tray-menu update check: reports "up to date", or offers to

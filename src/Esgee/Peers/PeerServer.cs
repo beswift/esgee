@@ -15,7 +15,7 @@ namespace Esgee.Peers;
 /// HttpListener on a non-localhost prefix needs a netsh URL ACL (admin —
 /// unacceptable for a per-user app), and embedding Kestrel adds the ASP.NET
 /// Core framework to every self-contained update (~40 MB — the same reason
-/// ffmpeg isn't bundled). Seven fixed routes for one trusted client don't
+/// ffmpeg isn't bundled). Eight fixed routes for one trusted client don't
 /// need a framework.
 ///
 /// Security model: reachability = tailnet membership (WireGuard-encrypted,
@@ -28,7 +28,13 @@ public sealed class PeerServer : IDisposable
     private readonly TcpListener _listener;
     private readonly ShotStore _store;
     private readonly byte[] _token;
+    private readonly string _tokenString;
     private readonly CancellationTokenSource _cts = new();
+
+    // Non-null only while a pairing window is open — the sole time POST /pair
+    // answers anything but 404. Volatile: set on the UI thread, read on
+    // connection worker threads.
+    private volatile PairingSession? _pairing;
 
     public string BoundAddress { get; }
 
@@ -37,8 +43,28 @@ public sealed class PeerServer : IDisposable
         _listener = listener;
         _store = store;
         _token = Encoding.UTF8.GetBytes(token);
+        _tokenString = token;
         BoundAddress = bound;
         _ = Task.Run(AcceptLoopAsync);
+    }
+
+    /// <summary>Opens the /pair route for this session's lifetime. Called by the
+    /// pairing window on open; the session's own expiry/lockout/consumed state
+    /// still gates every attempt, so a stale registration can't leak anything.</summary>
+    public void BeginPairing(PairingSession session)
+    {
+        _pairing = session;
+        Log.Info($"peers: pairing open — /pair answering until {session.ExpiresAt.ToLocalTime():HH:mm:ss}");
+    }
+
+    /// <summary>Closes the /pair route (window closed, expired, or locked out).</summary>
+    public void EndPairing(PairingSession session)
+    {
+        if (ReferenceEquals(_pairing, session))
+        {
+            _pairing = null;
+            Log.Info("peers: pairing closed — /pair disabled");
+        }
     }
 
     /// <summary>Starts the server on the machine's Tailscale IPv4. Returns null
@@ -106,6 +132,15 @@ public sealed class PeerServer : IDisposable
 
             var request = await HttpRequest.ReadAsync(stream, _cts.Token);
             if (request is null) return;
+
+            // /pair is the one PIN-authenticated route — the caller doesn't
+            // have the token yet; getting it is the point. Everything else
+            // stays strictly token-gated.
+            if (request.Method == "POST" && request.Path == "/pair")
+            {
+                await HandlePairAsync(stream, request, remote);
+                return;
+            }
 
             if (!Authorized(request))
             {
@@ -253,6 +288,48 @@ public sealed class PeerServer : IDisposable
         }
 
         await WriteJsonAsync(stream, 404, new { error = "no such endpoint" });
+    }
+
+    /// <summary>POST /pair: redeem the on-screen PIN for the PeerToken. Answers
+    /// 404 whenever no pairing window is open (or the session is spent), 401 on
+    /// a wrong PIN, 200 with the token exactly once. PIN and token values never
+    /// reach the log — only outcomes do.</summary>
+    private async Task HandlePairAsync(NetworkStream stream, HttpRequest req, string remote)
+    {
+        var session = _pairing;
+        if (session is null || !session.Active)
+        {
+            Log.Info($"peers: /pair from {remote} rejected — no pairing in progress");
+            await WriteJsonAsync(stream, 404, new { error = "no pairing in progress" });
+            return;
+        }
+
+        PairRequest? pair = null;
+        try { pair = JsonSerializer.Deserialize<PairRequest>(req.Body, PeerProtocol.Json); }
+        catch { /* falls through to 400 */ }
+        if (pair is null || string.IsNullOrEmpty(pair.Pin))
+        {
+            await WriteJsonAsync(stream, 400, new { error = "bad pair request" });
+            return;
+        }
+
+        var machine = string.IsNullOrWhiteSpace(pair.Machine) ? remote : pair.Machine.Trim();
+        switch (session.TryRedeem(pair.Pin, machine))
+        {
+            case PairAttemptResult.Accepted:
+                Log.Info($"peers: /pair from {remote} ('{machine}') accepted — PIN consumed, token issued");
+                await WriteJsonAsync(stream, 200, new PairResult(_tokenString, Environment.MachineName));
+                return;
+            case PairAttemptResult.WrongPin:
+                Log.Warn($"peers: /pair from {remote} wrong PIN " +
+                         $"({session.FailuresSoFar}/{PairingSession.MaxAttempts})");
+                await WriteJsonAsync(stream, 401, new { error = "wrong pin" });
+                return;
+            default:
+                Log.Info($"peers: /pair from {remote} rejected — no pairing in progress");
+                await WriteJsonAsync(stream, 404, new { error = "no pairing in progress" });
+                return;
+        }
     }
 
     private async Task HandleIngestAsync(NetworkStream stream, HttpRequest req, string remote)

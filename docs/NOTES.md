@@ -80,6 +80,24 @@ zero additional confidentiality. If the tailscale CLI can't produce an
 address (not installed, logged out), the server simply doesn't start — it
 never falls back to a wider bind.
 
+**Pairing (how the token travels):** machines exchange the token
+Bluetooth-style, from the tray, so nobody edits settings.json. "Pair a new
+machine…" opens a window showing a 6-digit PIN; while that window is open —
+and only then — the server answers `POST /pair`, the single route that
+authenticates by PIN instead of token (getting the token is its whole
+point). The PIN is `RandomNumberGenerator`-uniform, compared in constant
+time, single-use (the first success consumes it), dies with the window or at
+the 2-minute mark, and 5 wrong guesses close the window in a
+"too many attempts" state — so a guesser gets 5 tries against a keyspace of
+10⁶ per human-supervised session, on a network that already requires tailnet
+membership. "Pair with another machine…" discovers candidates (online
+tailnet nodes + manual `Peers` entries), POSTs the PIN to each, adopts the
+token from whoever accepts, saves settings, and brings the peer layer up
+in-process — no restart. First use of "Pair a new machine…" on a fresh
+machine auto-enables peers and mints the token. Disabling peers from the
+tray closes every socket but keeps the token, so re-pairing is instant.
+Neither PIN nor token values are ever logged; only outcomes are.
+
 **The API** (HTTP/1.1 + JSON, snake_case, `proto: 1` in /ping):
 
 ```
@@ -92,6 +110,9 @@ GET  /file/{id}     the original PNG/MP4; ?alt=gif / ?alt=thumb fetch a
                     recording's sibling GIF / preview frame
 POST /ingest        multipart/form-data: "meta" JSON sidecar + "file" bytes
                     (+ optional "gif"/"thumb" parts for recordings)
+POST /pair          {pin, machine} → {token, machine}. PIN-authenticated (the
+                    one tokenless route); answers only while a pairing window
+                    is open on the serving machine, 404 otherwise
 ```
 
 **Why a hand-rolled TcpListener responder** rather than HttpListener or
@@ -99,7 +120,7 @@ Kestrel: `HttpListener` on a non-localhost prefix requires a netsh URL ACL —
 an admin step, unacceptable for a per-user app. Embedding Kestrel
 (`FrameworkReference: Microsoft.AspNetCore.App`) means shipping the ASP.NET
 Core framework inside every self-contained build, ballooning each full
-update by tens of MB — the same reason ffmpeg isn't bundled. Seven fixed
+update by tens of MB — the same reason ffmpeg isn't bundled. Eight fixed
 routes serving one trusted client don't need a framework; the whole
 responder (incl. a minimal multipart parser) is one file. Gotcha learned en
 route: .NET's `MultipartFormDataContent` emits *unquoted* part names
