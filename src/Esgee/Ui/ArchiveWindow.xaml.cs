@@ -110,6 +110,9 @@ public partial class ArchiveWindow : Window
             if (PreviewLayer.Visibility == Visibility.Visible &&
                 e.Key is Key.Left or Key.Right)
             {
+                // Arrows navigate the preview — unless the caret is in the
+                // screen-text panel, where they belong to text selection.
+                if (OcrTextBox.IsKeyboardFocusWithin) return;
                 StepPreview(e.Key == Key.Left ? -1 : +1);
                 e.Handled = true;
                 return;
@@ -434,6 +437,12 @@ public partial class ArchiveWindow : Window
         var copy = new MenuItem { Header = "Copy to clipboard" };
         copy.Click += (_, _) => Copy(entry);
         menu.Items.Add(copy);
+        if (!shot.IsVideo)
+        {
+            var copyText = new MenuItem { Header = "Copy text" };
+            copyText.Click += (_, _) => CopyOcrText(entry);
+            menu.Items.Add(copyText);
+        }
         if (entry.IsRemote)
         {
             var pull = new MenuItem { Header = "Pull to this PC" };
@@ -578,6 +587,11 @@ public partial class ArchiveWindow : Window
         PreviewPullBtn.Visibility = entry.IsRemote ? Visibility.Visible : Visibility.Collapsed;
         PreviewFolderBtn.Visibility = entry.IsRemote ? Visibility.Collapsed : Visibility.Visible;
 
+        // Recordings carry no OCR text; the panel only makes sense for stills.
+        PreviewTextBtn.Visibility = shot.IsVideo ? Visibility.Collapsed : Visibility.Visible;
+        if (shot.IsVideo) SetOcrPanelOpen(false);
+        else if (_ocrPanelOpen) LoadOcrPanel(entry);
+
         var expected = shot.Id;
 
         if (shot.IsVideo)
@@ -642,8 +656,113 @@ public partial class ArchiveWindow : Window
         PreviewVideo.Source = null;
         PreviewImage.Source = null;
         PreviewLayer.Visibility = Visibility.Collapsed;
+        SetOcrPanelOpen(false);
         _previewIndex = -1;
         SearchBox.Focus();
+    }
+
+    // ---- screen text (OCR) --------------------------------------------------
+
+    private bool _ocrPanelOpen;
+    private int _ocrLoadSeq;      // stale-load guard, same idea as _generation
+    private string? _ocrRealText; // non-null only when the panel shows actual text
+
+    private void OnPreviewText(object sender, RoutedEventArgs e)
+    {
+        SetOcrPanelOpen(!_ocrPanelOpen);
+        if (_ocrPanelOpen) LoadOcrPanel(PreviewEntry);
+    }
+
+    private void SetOcrPanelOpen(bool open)
+    {
+        _ocrPanelOpen = open;
+        OcrPanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        if (open) PreviewTextBtn.Foreground = (System.Windows.Media.Brush)FindResource("Accent");
+        else PreviewTextBtn.ClearValue(ForegroundProperty);
+    }
+
+    private void LoadOcrPanel(Entry? entry)
+    {
+        if (entry is null) return;
+        var seq = ++_ocrLoadSeq;
+        _ocrRealText = null;
+        OcrTextBox.Text = "…";
+
+        _ = Task.Run(async () =>
+        {
+            var (done, text, problem) = await FetchOcrAsync(entry);
+            await Dispatcher.BeginInvoke(() =>
+            {
+                if (seq != _ocrLoadSeq) return;
+                if (problem is not null) { OcrTextBox.Text = problem; return; }
+                if (!done) { OcrTextBox.Text = "No text yet — OCR is still catching up on this capture."; return; }
+                if (string.IsNullOrWhiteSpace(text)) { OcrTextBox.Text = "No text found in this capture."; return; }
+                _ocrRealText = text;
+                OcrTextBox.Text = text;
+            });
+        });
+    }
+
+    private void OnOcrCopyAll(object sender, RoutedEventArgs e)
+    {
+        // The selectable box also holds status messages; only real text copies.
+        if (_ocrRealText is null) { FlashTitle("no text to copy"); return; }
+        try
+        {
+            _beforeClipboardWrite();
+            Clipboard.SetText(_ocrRealText);
+            FlashTitle("screen text copied");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"archive: text copy failed: {ex.Message}");
+            FlashTitle("copy failed — clipboard busy");
+        }
+    }
+
+    /// <summary>Tile context menu: straight to the clipboard, no preview needed —
+    /// the fast path for handing a screenshot's text to whatever needs it.</summary>
+    private async void CopyOcrText(Entry entry)
+    {
+        var (done, text, problem) = await FetchOcrAsync(entry);
+        if (problem is not null) { FlashTitle(problem); return; }
+        if (!done) { FlashTitle("no text yet — OCR still catching up"); return; }
+        if (string.IsNullOrWhiteSpace(text)) { FlashTitle("no text in this capture"); return; }
+        try
+        {
+            _beforeClipboardWrite();
+            Clipboard.SetText(text);
+            FlashTitle("screen text copied");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"archive: text copy failed: {ex.Message}");
+            FlashTitle("copy failed — clipboard busy");
+        }
+    }
+
+    /// <summary>One shot's OCR text, wherever it lives: the local index, or the
+    /// peer's /meta (which already carries text for pull sidecars). Never
+    /// throws — a peer problem comes back as a message instead.</summary>
+    private async Task<(bool Done, string Text, string? Problem)> FetchOcrAsync(Entry entry)
+    {
+        try
+        {
+            if (entry is { IsRemote: true, Remote: { } remote, Dto: { } dto })
+            {
+                var meta = await Task.Run(() => remote.MetaAsync(dto.Id));
+                if (meta is null) return (false, "", $"{remote.Peer.Name} didn't answer for this capture");
+                return (meta.OcrText is not null, meta.OcrText ?? "", null);
+            }
+
+            var (done, text, _) = await Task.Run(() => _store.GetOcr(entry.Shot.Id));
+            return (done, text ?? "", null);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"archive: OCR fetch failed for shot {entry.Shot.Id}: {ex.Message}");
+            return (false, "", "text unavailable — see log");
+        }
     }
 
     private void OnScrimClick(object sender, MouseButtonEventArgs e)

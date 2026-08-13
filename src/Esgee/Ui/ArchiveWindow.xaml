@@ -99,13 +99,17 @@
                     CornerRadius="14" Padding="10"
                     Effect="{StaticResource CardLift}">
                 <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <!-- Stills use the Image; videos swap in a muted looping player. -->
-                    <Border Grid.Row="0" CornerRadius="8" ClipToBounds="True"
+                    <Border Grid.Row="0" Grid.Column="0" CornerRadius="8" ClipToBounds="True"
                             MinWidth="320" MinHeight="200">
                         <Grid>
                             <Image x:Name="PreviewImage" Stretch="Uniform"
@@ -117,7 +121,7 @@
                         </Grid>
                     </Border>
 
-                    <DockPanel Grid.Row="1" Margin="4,10,4,2" LastChildFill="False">
+                    <DockPanel Grid.Row="1" Grid.Column="0" Margin="4,10,4,2" LastChildFill="False">
                         <TextBlock x:Name="PreviewCaption" DockPanel.Dock="Left"
                                    VerticalAlignment="Center" FontSize="12"
                                    Foreground="{StaticResource InkMuted}" />
@@ -125,6 +129,9 @@
                             <TextBlock Text="‹ › navigate   Esc close" Margin="0,0,14,0"
                                        VerticalAlignment="Center" FontSize="11"
                                        Foreground="{StaticResource InkMuted}" Opacity="0.7" />
+                            <Button x:Name="PreviewTextBtn" Style="{StaticResource IconButton}"
+                                    Content="&#xE7C3;" FontFamily="Segoe Fluent Icons"
+                                    ToolTip="Screen text (OCR)" Click="OnPreviewText" />
                             <Button x:Name="PreviewPullBtn" Style="{StaticResource IconButton}"
                                     Content="&#xE896;" FontFamily="Segoe Fluent Icons"
                                     ToolTip="Pull to this PC" Click="OnPreviewPull"
@@ -140,6 +147,35 @@
                                     ToolTip="Close" Click="OnPreviewClose" />
                         </StackPanel>
                     </DockPanel>
+
+                    <!-- Screen-text panel: every capture's OCR text, selectable.
+                         The archive can already FIND text; this hands it back. -->
+                    <Border x:Name="OcrPanel" Grid.Column="1" Grid.RowSpan="2"
+                            Width="320" Margin="10,0,0,0" Visibility="Collapsed"
+                            Background="#1F1F25" BorderBrush="{StaticResource Hairline}"
+                            BorderThickness="1" CornerRadius="8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <DockPanel Grid.Row="0" Margin="12,8,6,4" LastChildFill="False">
+                                <TextBlock Text="Screen text" DockPanel.Dock="Left"
+                                           VerticalAlignment="Center" FontSize="12"
+                                           Foreground="{StaticResource InkMuted}" />
+                                <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}"
+                                        Content="&#xE8C8;" FontFamily="Segoe Fluent Icons"
+                                        ToolTip="Copy all text" Click="OnOcrCopyAll" />
+                            </DockPanel>
+                            <TextBox x:Name="OcrTextBox" Grid.Row="1" IsReadOnly="True"
+                                     IsReadOnlyCaretVisible="True" TextWrapping="Wrap"
+                                     AcceptsReturn="True" Background="Transparent"
+                                     BorderThickness="0" Foreground="{StaticResource Ink}"
+                                     CaretBrush="{StaticResource Ink}" FontSize="12.5"
+                                     Padding="12,2,10,12"
+                                     VerticalScrollBarVisibility="Auto" />
+                        </Grid>
+                    </Border>
                 </Grid>
             </Border>
         </Grid>
