@@ -9,41 +9,28 @@ blackbook was denied all night). Expect a short first-build fix round, not a
 clean first try. The known-risk list is at the bottom — check it before
 head-scratching.
 
-## Build it in Xcode (the path for this morning)
+## Build it in Xcode
 
-On blackbook:
+`mac/esgee.xcodeproj` is checked in — a fresh clone opens in Xcode with no
+tooling installed. The normal flow, GitHub Desktop or CLI alike:
 
-```bash
-# 1. Get the branch
-git clone <your repo remote or a copy> esgee && cd esgee
-git checkout overnight/mesh-and-mac
+1. Clone the repo, switch to the branch (`overnight/mesh-and-mac` until it
+   merges).
+2. Open **`mac/esgee.xcodeproj`** — the project file is inside `mac/`, not
+   the repo root.
+3. Once, on a new machine: Signing & Capabilities → Team → your team
+   (automatic signing).
+4. **⌘R**. Approve the **Local Network** and **Screen Recording** prompts;
+   after granting Screen Recording, quit and run once more (macOS applies it
+   only to new processes). Signed with a real team identity, both grants
+   persist across rebuilds.
 
-# 2. XcodeGen generates the project (project.yml is the source of truth;
-#    *.xcodeproj is gitignored)
-brew install xcodegen        # once
-cd mac && xcodegen generate
-
-# 3. Open and run
-open esgee.xcodeproj
-```
-
-In Xcode: select the `esgee` scheme → your Team under Signing & Capabilities
-(automatic signing is fine for local runs; the Developer ID / notarization
-path is CI's job later) → **⌘R**.
-
-Two ways to get the branch onto blackbook:
-
-- **Push it** (from alphalfa): `git push origin overnight/mesh-and-mac`, then
-  clone/fetch from GitHub as usual. (Not pushed overnight on purpose —
-  nothing leaves the machines without your say-so.)
-- **Or pull the staged bundle** — a `git bundle` of the branch is already
-  sitting on minimax, refreshed at the end of the overnight run:
-
-  ```bash
-  scp ben@minimax:~/esgee-node/esgee-overnight.bundle /tmp/
-  git clone /tmp/esgee-overnight.bundle esgee && cd esgee
-  git checkout overnight/mesh-and-mac
-  ```
+The project stays *generated*: `mac/project.yml` is the source of truth.
+Editing targets/settings means editing project.yml, running
+`xcodegen generate` in `mac/`, and committing both — never hand-editing the
+pbxproj. Day-to-day Swift work needs none of that; adding/removing source
+files doesn't either (the target globs `Sources/`, and regenerating picks
+them up).
 
 ## First-run expectations
 

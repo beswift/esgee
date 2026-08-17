@@ -18,6 +18,10 @@ build/
 .claude/
 
 # macOS app — the project is generated from mac/project.yml (xcodegen)
-mac/*.xcodeproj
+# The Xcode project is CHECKED IN so a fresh clone opens in Xcode with no
+# tooling. It is still generated: edit mac/project.yml, run xcodegen, commit
+# both. Only user-state inside it stays ignored.
+mac/*.xcodeproj/xcuserdata
+mac/*.xcodeproj/project.xcworkspace/xcuserdata
 mac/DerivedData/
 mac/.build/

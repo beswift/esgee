@@ -1,0 +1,502 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		05053B713775DD964B93CF3B /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 523EC112FE443C83A82F453E /* AppDelegate.swift */; };
+		0532341AA30BDB6DB2E1470C /* Multipart.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BA55B67206767F21F9F93C3 /* Multipart.swift */; };
+		08A5AD84947507A686EC209F /* OverlayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A99BE7BBD394A7EEBCA929B /* OverlayController.swift */; };
+		263DD7A84D231FAF8F5A6B30 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C2F9EB3B1AAB607927BEEB2 /* main.swift */; };
+		2A7C4FC503DA99407A0EBA49 /* ArchiveGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A26F43B688DF3045F287842 /* ArchiveGridView.swift */; };
+		2A932D2788DF920F6574E848 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 5C99FA87C4423D58C76AEBF8 /* Sparkle */; };
+		2D67F9C8BCFE89097D0C957E /* CountdownPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40E440610689AC263549D7B9 /* CountdownPill.swift */; };
+		56AE40548E7F47E8B1B2B594 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 756D9BB5CD015080171E8D6A /* Theme.swift */; };
+		5C3B28F39582A0719F40E602 /* SyncQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42E1A861E7B09EEF75BD3149 /* SyncQueue.swift */; };
+		5D6938B8E8975B3D50EC06A1 /* ClipboardWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 722F002D052309341978E324 /* ClipboardWatcher.swift */; };
+		63F5FA1E30E5A3C3B0490639 /* CaptureController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CD07A8947711AF91B07C52 /* CaptureController.swift */; };
+		6A90A01D8B4D07ADF4DFD4BE /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14A982A20321E6717616EB45 /* Settings.swift */; };
+		6CE67A722C4B6E48652B3AD8 /* PeerServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7632CD7E6960FFCF9839AB7E /* PeerServer.swift */; };
+		80159A8F90882B3ACCC8D827 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C74B21EE8CB8FA7334FC65 /* MenuBarController.swift */; };
+		90ED073C5FC0FD19932E8391 /* ArchiveWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC714371700B1CCAD8E46335 /* ArchiveWindow.swift */; };
+		91F9C4EE00E9BFA3FC83CA22 /* OcrIndexer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E7395369D4009AB9A8631BB /* OcrIndexer.swift */; };
+		9CA189C7C0625E3A7670B36C /* Pairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB876A7C406D4094213885A /* Pairing.swift */; };
+		9DCF2B5B34D640F62994F3A7 /* Tailnet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 021891A26886E70DF2B4B5C6 /* Tailnet.swift */; };
+		9E9E1A5CA343F84E220DC172 /* PairJoinWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D79E2831542662B010EB1910 /* PairJoinWindow.swift */; };
+		A04B615A501CDC8CF2A2D6A9 /* ShotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 771A355C5BDAD9A936C3C20D /* ShotStore.swift */; };
+		A1CDA2D225261B07164F8926 /* ShotCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30B88B220F18B0576732E1A1 /* ShotCardView.swift */; };
+		A95DE07124D521B830B80FD5 /* Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE08E37EB7C2CCBF6D1C8192 /* Protocol.swift */; };
+		BA7EEBAF8FC0004B4221AD4C /* PairHostWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D861ACC8F6C5003393F90001 /* PairHostWindow.swift */; };
+		BC19D4FA742DCA0895E2B7DA /* Shot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 885E0059221B95E8F8449229 /* Shot.swift */; };
+		C58FE89E8DD0B32A56D8104D /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DF0B75C551BACC6E7937CE5 /* HotkeyManager.swift */; };
+		C893D61EA8D5C1768F792398 /* PeerClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B48B9A6BADACF5CE178BA807 /* PeerClient.swift */; };
+		DB2483301341EF5BF74265FA /* HttpRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31BE70FF0558BA15D2B2C97B /* HttpRequest.swift */; };
+		DD7B173474D9A48C93B8B2B7 /* ShelfPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8703B89C4941DFE2EBEA3404 /* ShelfPanel.swift */; };
+		EC44CF9F0CD5BABFCE8A8D2E /* Log.swift in Sources */ = {isa = PBXBuildFile; fileRef = 088363F9DE885E8438745A31 /* Log.swift */; };
+		F08238754EE33D8E7598F93D /* ShotPasteboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 016062F5C003F5D791D4362C /* ShotPasteboard.swift */; };
+		F566846BD28F65247737D847 /* ScreenGrabber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A8A6CB8C5B210B083935FF7 /* ScreenGrabber.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		016062F5C003F5D791D4362C /* ShotPasteboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotPasteboard.swift; sourceTree = "<group>"; };
+		021891A26886E70DF2B4B5C6 /* Tailnet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tailnet.swift; sourceTree = "<group>"; };
+		088363F9DE885E8438745A31 /* Log.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Log.swift; sourceTree = "<group>"; };
+		0A26F43B688DF3045F287842 /* ArchiveGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchiveGridView.swift; sourceTree = "<group>"; };
+		0DF0B75C551BACC6E7937CE5 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
+		14A982A20321E6717616EB45 /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
+		2A99BE7BBD394A7EEBCA929B /* OverlayController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayController.swift; sourceTree = "<group>"; };
+		2BA55B67206767F21F9F93C3 /* Multipart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Multipart.swift; sourceTree = "<group>"; };
+		30B88B220F18B0576732E1A1 /* ShotCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotCardView.swift; sourceTree = "<group>"; };
+		31BE70FF0558BA15D2B2C97B /* HttpRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HttpRequest.swift; sourceTree = "<group>"; };
+		40E440610689AC263549D7B9 /* CountdownPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CountdownPill.swift; sourceTree = "<group>"; };
+		42E1A861E7B09EEF75BD3149 /* SyncQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncQueue.swift; sourceTree = "<group>"; };
+		49C74B21EE8CB8FA7334FC65 /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
+		4E7395369D4009AB9A8631BB /* OcrIndexer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OcrIndexer.swift; sourceTree = "<group>"; };
+		523EC112FE443C83A82F453E /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		6B30E4A117C85C00DBFE2C7A /* esgee.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = esgee.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6C2F9EB3B1AAB607927BEEB2 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		722F002D052309341978E324 /* ClipboardWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardWatcher.swift; sourceTree = "<group>"; };
+		756D9BB5CD015080171E8D6A /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		7632CD7E6960FFCF9839AB7E /* PeerServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerServer.swift; sourceTree = "<group>"; };
+		771A355C5BDAD9A936C3C20D /* ShotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotStore.swift; sourceTree = "<group>"; };
+		7A8A6CB8C5B210B083935FF7 /* ScreenGrabber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenGrabber.swift; sourceTree = "<group>"; };
+		8703B89C4941DFE2EBEA3404 /* ShelfPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfPanel.swift; sourceTree = "<group>"; };
+		885E0059221B95E8F8449229 /* Shot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shot.swift; sourceTree = "<group>"; };
+		A7CD07A8947711AF91B07C52 /* CaptureController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureController.swift; sourceTree = "<group>"; };
+		B48B9A6BADACF5CE178BA807 /* PeerClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerClient.swift; sourceTree = "<group>"; };
+		CE08E37EB7C2CCBF6D1C8192 /* Protocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Protocol.swift; sourceTree = "<group>"; };
+		D79E2831542662B010EB1910 /* PairJoinWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairJoinWindow.swift; sourceTree = "<group>"; };
+		D861ACC8F6C5003393F90001 /* PairHostWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairHostWindow.swift; sourceTree = "<group>"; };
+		EBB876A7C406D4094213885A /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
+		EC714371700B1CCAD8E46335 /* ArchiveWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchiveWindow.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AE6ED452C370D9BE80191BAD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2A932D2788DF920F6574E848 /* Sparkle in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1D968FE09CC0251D83D8FB94 /* Capture */ = {
+			isa = PBXGroup;
+			children = (
+				A7CD07A8947711AF91B07C52 /* CaptureController.swift */,
+				722F002D052309341978E324 /* ClipboardWatcher.swift */,
+				40E440610689AC263549D7B9 /* CountdownPill.swift */,
+				0DF0B75C551BACC6E7937CE5 /* HotkeyManager.swift */,
+				2A99BE7BBD394A7EEBCA929B /* OverlayController.swift */,
+				7A8A6CB8C5B210B083935FF7 /* ScreenGrabber.swift */,
+			);
+			path = Capture;
+			sourceTree = "<group>";
+		};
+		31FA28C991CD2BD9EDE03959 /* Peers */ = {
+			isa = PBXGroup;
+			children = (
+				31BE70FF0558BA15D2B2C97B /* HttpRequest.swift */,
+				2BA55B67206767F21F9F93C3 /* Multipart.swift */,
+				D861ACC8F6C5003393F90001 /* PairHostWindow.swift */,
+				EBB876A7C406D4094213885A /* Pairing.swift */,
+				D79E2831542662B010EB1910 /* PairJoinWindow.swift */,
+				B48B9A6BADACF5CE178BA807 /* PeerClient.swift */,
+				7632CD7E6960FFCF9839AB7E /* PeerServer.swift */,
+				42E1A861E7B09EEF75BD3149 /* SyncQueue.swift */,
+				021891A26886E70DF2B4B5C6 /* Tailnet.swift */,
+			);
+			path = Peers;
+			sourceTree = "<group>";
+		};
+		36A3140C3BA7D663F207956A /* Store */ = {
+			isa = PBXGroup;
+			children = (
+				771A355C5BDAD9A936C3C20D /* ShotStore.swift */,
+			);
+			path = Store;
+			sourceTree = "<group>";
+		};
+		61BED385283D2D586C98C6BA /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				CE08E37EB7C2CCBF6D1C8192 /* Protocol.swift */,
+				885E0059221B95E8F8449229 /* Shot.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		AD20F20FE713B4BDADEEE7FD /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				EF9FD1AE513680DA3AC445BC /* App */,
+				1D968FE09CC0251D83D8FB94 /* Capture */,
+				61BED385283D2D586C98C6BA /* Core */,
+				FAFDED41F421D593AF0AD7F4 /* Ocr */,
+				31FA28C991CD2BD9EDE03959 /* Peers */,
+				36A3140C3BA7D663F207956A /* Store */,
+				FF8B3716C63F0984E573D940 /* Ui */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		B735D6AA1CD3FEB10AE1BE35 = {
+			isa = PBXGroup;
+			children = (
+				AD20F20FE713B4BDADEEE7FD /* Sources */,
+				BBD9430E134FB57DD9CD8937 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		BBD9430E134FB57DD9CD8937 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				6B30E4A117C85C00DBFE2C7A /* esgee.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		EF9FD1AE513680DA3AC445BC /* App */ = {
+			isa = PBXGroup;
+			children = (
+				523EC112FE443C83A82F453E /* AppDelegate.swift */,
+				088363F9DE885E8438745A31 /* Log.swift */,
+				6C2F9EB3B1AAB607927BEEB2 /* main.swift */,
+				49C74B21EE8CB8FA7334FC65 /* MenuBarController.swift */,
+				14A982A20321E6717616EB45 /* Settings.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		FAFDED41F421D593AF0AD7F4 /* Ocr */ = {
+			isa = PBXGroup;
+			children = (
+				4E7395369D4009AB9A8631BB /* OcrIndexer.swift */,
+			);
+			path = Ocr;
+			sourceTree = "<group>";
+		};
+		FF8B3716C63F0984E573D940 /* Ui */ = {
+			isa = PBXGroup;
+			children = (
+				0A26F43B688DF3045F287842 /* ArchiveGridView.swift */,
+				EC714371700B1CCAD8E46335 /* ArchiveWindow.swift */,
+				8703B89C4941DFE2EBEA3404 /* ShelfPanel.swift */,
+				30B88B220F18B0576732E1A1 /* ShotCardView.swift */,
+				016062F5C003F5D791D4362C /* ShotPasteboard.swift */,
+				756D9BB5CD015080171E8D6A /* Theme.swift */,
+			);
+			path = Ui;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		2A17D418A7FB02069BEAC98A /* esgee */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E8F33FD909601B3726B25E09 /* Build configuration list for PBXNativeTarget "esgee" */;
+			buildPhases = (
+				AB338A66572A4F6B6C3BEB18 /* Sources */,
+				AE6ED452C370D9BE80191BAD /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = esgee;
+			packageProductDependencies = (
+				5C99FA87C4423D58C76AEBF8 /* Sparkle */,
+			);
+			productName = esgee;
+			productReference = 6B30E4A117C85C00DBFE2C7A /* esgee.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		657D5F68E97A0328AE1879D1 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 858E93EE291828B0F8B4C8B1 /* Build configuration list for PBXProject "esgee" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = B735D6AA1CD3FEB10AE1BE35;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				0F16DB3AC6F5492DE4163839 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = BBD9430E134FB57DD9CD8937 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				2A17D418A7FB02069BEAC98A /* esgee */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AB338A66572A4F6B6C3BEB18 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				05053B713775DD964B93CF3B /* AppDelegate.swift in Sources */,
+				2A7C4FC503DA99407A0EBA49 /* ArchiveGridView.swift in Sources */,
+				90ED073C5FC0FD19932E8391 /* ArchiveWindow.swift in Sources */,
+				63F5FA1E30E5A3C3B0490639 /* CaptureController.swift in Sources */,
+				5D6938B8E8975B3D50EC06A1 /* ClipboardWatcher.swift in Sources */,
+				2D67F9C8BCFE89097D0C957E /* CountdownPill.swift in Sources */,
+				C58FE89E8DD0B32A56D8104D /* HotkeyManager.swift in Sources */,
+				DB2483301341EF5BF74265FA /* HttpRequest.swift in Sources */,
+				EC44CF9F0CD5BABFCE8A8D2E /* Log.swift in Sources */,
+				80159A8F90882B3ACCC8D827 /* MenuBarController.swift in Sources */,
+				0532341AA30BDB6DB2E1470C /* Multipart.swift in Sources */,
+				91F9C4EE00E9BFA3FC83CA22 /* OcrIndexer.swift in Sources */,
+				08A5AD84947507A686EC209F /* OverlayController.swift in Sources */,
+				BA7EEBAF8FC0004B4221AD4C /* PairHostWindow.swift in Sources */,
+				9E9E1A5CA343F84E220DC172 /* PairJoinWindow.swift in Sources */,
+				9CA189C7C0625E3A7670B36C /* Pairing.swift in Sources */,
+				C893D61EA8D5C1768F792398 /* PeerClient.swift in Sources */,
+				6CE67A722C4B6E48652B3AD8 /* PeerServer.swift in Sources */,
+				A95DE07124D521B830B80FD5 /* Protocol.swift in Sources */,
+				F566846BD28F65247737D847 /* ScreenGrabber.swift in Sources */,
+				6A90A01D8B4D07ADF4DFD4BE /* Settings.swift in Sources */,
+				DD7B173474D9A48C93B8B2B7 /* ShelfPanel.swift in Sources */,
+				BC19D4FA742DCA0895E2B7DA /* Shot.swift in Sources */,
+				A1CDA2D225261B07164F8926 /* ShotCardView.swift in Sources */,
+				F08238754EE33D8E7598F93D /* ShotPasteboard.swift in Sources */,
+				A04B615A501CDC8CF2A2D6A9 /* ShotStore.swift in Sources */,
+				5C3B28F39582A0719F40E602 /* SyncQueue.swift in Sources */,
+				9DCF2B5B34D640F62994F3A7 /* Tailnet.swift in Sources */,
+				56AE40548E7F47E8B1B2B594 /* Theme.swift in Sources */,
+				263DD7A84D231FAF8F5A6B30 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		32CE2DE45CBBF1A219977F7B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Resources/esgee.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 0;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.esgee.mac;
+				PRODUCT_NAME = esgee;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		64F88465B65B2190B60B8221 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		AB1DE72839EEDDB2822FF46C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Resources/esgee.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 0;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.esgee.mac;
+				PRODUCT_NAME = esgee;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		FF1C17D43EB6C7FD2FB3DB99 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		858E93EE291828B0F8B4C8B1 /* Build configuration list for PBXProject "esgee" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FF1C17D43EB6C7FD2FB3DB99 /* Debug */,
+				64F88465B65B2190B60B8221 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E8F33FD909601B3726B25E09 /* Build configuration list for PBXNativeTarget "esgee" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AB1DE72839EEDDB2822FF46C /* Debug */,
+				32CE2DE45CBBF1A219977F7B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		0F16DB3AC6F5492DE4163839 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.6.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		5C99FA87C4423D58C76AEBF8 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0F16DB3AC6F5492DE4163839 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 657D5F68E97A0328AE1879D1 /* Project object */;
+}
