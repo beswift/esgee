@@ -112,30 +112,6 @@ enum IsoStamp {
         }
     }()
 
-    nonisolated(unsafe) private static let stem: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone.current
-        f.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        return f
-    }()
-
-    nonisolated(unsafe) private static let year: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone.current
-        f.dateFormat = "yyyy"
-        return f
-    }()
-
-    nonisolated(unsafe) private static let month: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone.current
-        f.dateFormat = "MM"
-        return f
-    }()
-
     /// Mint the raw string for a capture taken on THIS machine, now.
     static func format(_ date: Date) -> String { writer.string(from: date) }
 
@@ -148,11 +124,63 @@ enum IsoStamp {
         return nil
     }
 
-    /// "yyyy-MM-dd_HH-mm-ss" in local time — the archive's file naming, byte
-    /// identical to the Windows tree so a moved archive is indistinguishable.
-    static func fileStem(_ date: Date) -> String { stem.string(from: date) }
+    /// The UTC offset a raw taken_at string carries ("Z", "±HH:mm", "±HHmm",
+    /// or "±HH") as a fixed TimeZone — nil when the string has none. Ingest
+    /// and pull file captures by the SENDER's wall clock (the C# reference
+    /// formats the parsed DateTimeOffset directly), so the yyyy/MM folders
+    /// and the file stem must come from this offset, never TimeZone.current —
+    /// otherwise the same capture lands at different tree paths on machines
+    /// in different zones, breaking the "same artifact" store contract
+    /// (docs/MAC.md "Store").
+    static func embeddedTimeZone(of raw: String) -> TimeZone? {
+        let s = raw.trimmingCharacters(in: .whitespaces)
+        if s.hasSuffix("Z") || s.hasSuffix("z") {
+            return TimeZone(secondsFromGMT: 0)
+        }
+        // Only the time part may carry the sign — the date's own dashes
+        // must not match.
+        guard let tIndex = s.firstIndex(where: { $0 == "T" || $0 == "t" }) else { return nil }
+        let time = s[s.index(after: tIndex)...]
+        guard let signIndex = time.lastIndex(where: { $0 == "+" || $0 == "-" }) else { return nil }
+        let sign = time[signIndex] == "-" ? -1 : 1
+        let digits = String(time[time.index(after: signIndex)...]).filter { $0 != ":" }
+        guard digits.count == 2 || digits.count == 4,
+              digits.allSatisfy({ $0.isASCII && $0.isNumber }),
+              let hours = Int(digits.prefix(2)) else { return nil }
+        let minutes = digits.count == 4 ? (Int(digits.suffix(2)) ?? 0) : 0
+        guard hours <= 14, minutes <= 59,
+              let zone = TimeZone(secondsFromGMT: sign * (hours * 3600 + minutes * 60))
+        else { return nil }
+        return zone
+    }
 
-    /// "yyyy" / "MM" partition folders, local time.
-    static func yearFolder(_ date: Date) -> String { year.string(from: date) }
-    static func monthFolder(_ date: Date) -> String { month.string(from: date) }
+    /// Wall-clock fields of `date` in `tz` — Gregorian always, so the folder
+    /// layout can never fork under a non-Gregorian user calendar (the same
+    /// reason the C# build formats under the invariant culture).
+    private static func fields(_ date: Date, in tz: TimeZone) -> DateComponents {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = tz
+        return cal.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+    }
+
+    /// "yyyy-MM-dd_HH-mm-ss" — the archive's file naming, byte identical to
+    /// the Windows tree so a moved archive is indistinguishable. Local
+    /// captures use the default (this machine's zone — the same offset
+    /// format() mints); ingest/pull pass the sender's embedded offset so
+    /// both trees name the same artifact identically.
+    static func fileStem(_ date: Date, in tz: TimeZone = .current) -> String {
+        let c = fields(date, in: tz)
+        return String(format: "%04d-%02d-%02d_%02d-%02d-%02d",
+                      c.year ?? 1970, c.month ?? 1, c.day ?? 1,
+                      c.hour ?? 0, c.minute ?? 0, c.second ?? 0)
+    }
+
+    /// "yyyy" / "MM" partition folders — same time-zone rule as fileStem.
+    static func yearFolder(_ date: Date, in tz: TimeZone = .current) -> String {
+        String(format: "%04d", fields(date, in: tz).year ?? 1970)
+    }
+
+    static func monthFolder(_ date: Date, in tz: TimeZone = .current) -> String {
+        String(format: "%02d", fields(date, in: tz).month ?? 1)
+    }
 }

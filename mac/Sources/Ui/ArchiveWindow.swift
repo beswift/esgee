@@ -40,6 +40,13 @@ final class ArchiveWindowController: NSObject, NSWindowDelegate {
         window?.makeKeyAndOrderFront(nil)
     }
 
+    /// Re-runs machine discovery so an already-open window gains the
+    /// switcher the moment a pairing lands — the same promise the Windows
+    /// build keeps via ArchiveWindow.RefreshMachineSwitcher().
+    func refreshMachineSwitcher() {
+        model.refreshMachineSwitcher()
+    }
+
     private func buildWindow() {
         let win = ArchiveKeyWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1000, height: 680),
@@ -259,6 +266,17 @@ final class ArchiveModel: ObservableObject {
     }
 
     // ---- machine switcher --------------------------------------------------------
+
+    /// Public and re-runnable, mirroring the Windows RefreshMachineSwitcher:
+    /// the resident app calls it when a pairing lands while this window is
+    /// open, so the switcher tracks settings instead of snapshotting them at
+    /// open. Resets the selection to This Mac — an adopted token makes any
+    /// existing remoteClient's captured token stale, and the next machine
+    /// switch builds a fresh client from settings.current.
+    func refreshMachineSwitcher() {
+        guard started else { return } // start() runs the first build
+        loadMachines()
+    }
 
     /// This Mac plus every peer that answers /ping with our token. Hidden
     /// entirely until a PeerToken exists, so the default configuration
@@ -648,8 +666,13 @@ final class ArchiveModel: ObservableObject {
                 let cached = try await fetch.value
 
                 let ext = (cached.path as NSString).pathExtension
-                let dest = store.planIngestPath(takenAt: cached.takenAt,
-                                                ext: ext.isEmpty ? ".png" : "." + ext)
+                // Filed by the SENDER's wall clock (the offset in the dto's
+                // raw taken_at), matching where the sender's own tree holds
+                // this capture — never this Mac's zone.
+                let dest = store.planIngestPath(
+                    takenAt: cached.takenAt,
+                    timeZone: IsoStamp.embeddedTimeZone(of: dto.takenAt) ?? .current,
+                    ext: ext.isEmpty ? ".png" : "." + ext)
                 let fm = FileManager.default
                 try fm.copyItem(atPath: cached.path, toPath: dest)
                 if cached.isVideo {
@@ -667,13 +690,15 @@ final class ArchiveModel: ObservableObject {
 
                 // takenAtRaw is the dto's string verbatim — re-formatting a
                 // parsed date here would rewrite the sender's UTC offset.
-                let result = store.ingest(path: dest, sha256: cached.sha256,
-                                          takenAtRaw: dto.takenAt,
-                                          width: cached.width, height: cached.height,
-                                          kind: cached.kind, durationMs: cached.durationMs,
-                                          ocrText: meta?.ocrText,
-                                          ocrEngineVersion: meta?.ocrEngineVersion ?? "",
-                                          origin: origin)
+                // A DB failure throws into the catch below: "pull failed",
+                // never a success flash for a row that didn't land.
+                let result = try store.ingest(path: dest, sha256: cached.sha256,
+                                              takenAtRaw: dto.takenAt,
+                                              width: cached.width, height: cached.height,
+                                              kind: cached.kind, durationMs: cached.durationMs,
+                                              ocrText: meta?.ocrText,
+                                              ocrEngineVersion: meta?.ocrEngineVersion ?? "",
+                                              origin: origin)
                 if result.duplicate {
                     try? fm.removeItem(atPath: dest)
                     try? fm.removeItem(atPath: (dest as NSString).deletingPathExtension + ".gif")

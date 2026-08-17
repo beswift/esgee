@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
@@ -111,7 +112,7 @@ public sealed class ShotStore : IDisposable
     {
         var sha = Convert.ToHexString(SHA256.HashData(png));
 
-        var dir = Path.Combine(Root, takenAt.ToString("yyyy"), takenAt.ToString("MM"));
+        var dir = MonthDir(takenAt);
         Directory.CreateDirectory(dir);
 
         lock (_gate)
@@ -122,7 +123,7 @@ public sealed class ShotStore : IDisposable
                 return existing;
             }
 
-            var path = Unique(Path.Combine(dir, $"{takenAt:yyyy-MM-dd_HH-mm-ss}.png"));
+            var path = Unique(Path.Combine(dir, StampName(takenAt) + ".png"));
             File.WriteAllBytes(path, png);
 
             using var cmd = _db.CreateCommand();
@@ -443,13 +444,29 @@ public sealed class ShotStore : IDisposable
     /// an incoming file, creating the month folder. Caller writes the bytes.</summary>
     public string PlanIngestPath(DateTimeOffset takenAt, string extension)
     {
-        var dir = Path.Combine(Root, takenAt.ToString("yyyy"), takenAt.ToString("MM"));
+        var dir = MonthDir(takenAt);
         Directory.CreateDirectory(dir);
         lock (_gate)
         {
-            return Unique(Path.Combine(dir, $"{takenAt:yyyy-MM-dd_HH-mm-ss}{extension}"));
+            return Unique(Path.Combine(dir, StampName(takenAt) + extension));
         }
     }
+
+    /// <summary>The archive's yyyy/MM month folder for a timestamp — formatted
+    /// under the INVARIANT culture always. The current culture's default
+    /// calendar leaks into bare ToString ("2569/08" under th-TH's Buddhist
+    /// era, a different year AND month under ar-SA), and on Linux the node's
+    /// culture rides in on LANG — a locale-carrying service environment would
+    /// silently fork one archive into two divergent trees.</summary>
+    private string MonthDir(DateTimeOffset takenAt) => Path.Combine(Root,
+        takenAt.ToString("yyyy", CultureInfo.InvariantCulture),
+        takenAt.ToString("MM", CultureInfo.InvariantCulture));
+
+    /// <summary>File-name stem for a capture — same invariant-culture rule as
+    /// MonthDir, and the documented cross-platform naming contract
+    /// (docs/MAC.md "Store": same yyyy/MM tree, same yyyy-MM-dd_HH-mm-ss names).</summary>
+    private static string StampName(DateTimeOffset takenAt)
+        => takenAt.ToString("yyyy-MM-dd_HH-mm-ss", CultureInfo.InvariantCulture);
 
     /// <summary>Shots never pushed to <paramref name="target"/>, oldest first —
     /// the startup backlog sweep. Excludes shots that ORIGINATED at the target

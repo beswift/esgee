@@ -1,9 +1,10 @@
 # Running esgee on blackbook — first build
 
 Written overnight 2026-08-17. The Mac app under `mac/` is a complete
-implementation of [docs/MAC.md](MAC.md) — 33 Swift files written against
-`mac/SPEC.md` and cross-checked by an integration pass, but **it has not been
-compiled yet** (no Mac was reachable from the build machine overnight; SSH to
+implementation of [docs/MAC.md](MAC.md) — 30 Swift files (all under
+`mac/Sources/`; `git ls-files 'mac/*.swift' | wc -l` to re-check) written
+against `mac/SPEC.md` and cross-checked by an integration pass, but **it has
+not been compiled yet** (no Mac was reachable from the build machine overnight; SSH to
 blackbook was denied all night). Expect a short first-build fix round, not a
 clean first try. The known-risk list is at the bottom — check it before
 head-scratching.

@@ -97,10 +97,16 @@ final class PeerClient: Sendable {
 
     // ---- local materialization ----------------------------------------------
 
+    /// Cache path this peer's shot will occupy locally. Prefixed with the id
+    /// so two same-named captures from different days can't collide. fileName
+    /// is wire data — a hostile or compromised server could send
+    /// "../../Library/…/x" — so it is flattened through sanitize (path
+    /// separators and every other invalid file-name char become '_') before
+    /// it may name a file under the cache, exactly like the C# CachePathFor.
     func cachePath(for dto: ShotDto) -> URL {
         Self.cacheRoot
             .appendingPathComponent(Self.sanitize(peer.name), isDirectory: true)
-            .appendingPathComponent("\(dto.id)_\(dto.fileName)")
+            .appendingPathComponent("\(dto.id)_\(Self.sanitize(dto.fileName))")
     }
 
     func isCached(_ dto: ShotDto) -> Bool {
@@ -167,15 +173,21 @@ final class PeerClient: Sendable {
 
         // ".part" beside the destination, then rename: the rename is the
         // commit, so a crash mid-copy never leaves a plausible-looking file.
-        let part = URL(fileURLWithPath: dest.path + ".part")
-        try? fm.removeItem(at: part)
+        // Unique per attempt — two fetches of the same shot (Entry replaced
+        // by a refresh mid-prefetch, or a second archive process) must not
+        // fight over one temp name or delete each other's in-flight file
+        // (same rule as the C# DownloadAsync).
+        let part = URL(fileURLWithPath:
+            dest.path + "." + String(UUID().uuidString.prefix(8)) + ".part")
+        defer { try? fm.removeItem(at: part) }
         do {
             try fm.moveItem(at: tmp, to: part)
             try? fm.removeItem(at: dest)
             try fm.moveItem(at: part, to: dest)
         } catch {
-            try? fm.removeItem(at: part)
-            throw error
+            // Two racing commits can collide on the destination itself; the
+            // bytes are identical, so whoever landed is right.
+            guard fm.fileExists(atPath: dest.path) else { throw error }
         }
     }
 

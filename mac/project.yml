@@ -18,6 +18,12 @@ packages:
   # The one external dependency (docs/MAC.md "Distribution"). Everything else
   # is system frameworks by design — instant cold start is part of the app's
   # identity, and every framework added is paid for on every Sparkle update.
+  #
+  # First build on a fresh Mac: xcodebuild must resolve this package over the
+  # network (SPM) before anything compiles. Offline or rate-limited, the
+  # build fails with "no such module 'Sparkle'" at MenuBarController.swift's
+  # import — that's an unresolved package, not a code error; run
+  # `xcodebuild -resolvePackageDependencies` (or retry online) first.
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: "2.6.0"

@@ -18,20 +18,39 @@ without touching anything downstream.
 
 ## Architecture
 
+Three projects since the Core/Node split (docs/SHARES.md "The node is a
+Linux binary"): everything desktop-free lives in `Esgee.Core`, the WPF app
+and the headless node both reference it. Build both
+`src/Esgee/Esgee.csproj` and `src/Esgee.Node/Esgee.Node.csproj` to know a
+Core change broke neither consumer.
+
 ```
-Capture/   ClipboardWatcher + HotkeyManager + OverlayWindow + CaptureController
-           + WindowFinder + CountdownWindow — the capture front ends
-           + ScreenRecorder + RecordController + RecordingIndicatorWindow —
-             the ffmpeg-backed recording front end
-           + FfmpegSetup — pinned, hash-verified first-run ffmpeg download
-Store/     PNG/MP4 on disk + SQLite/FTS5 index (thread-safe; WAL)
-Ocr/       Background Windows.Media.Ocr indexer
-Peers/     Opt-in machine-to-machine layer over Tailscale: PeerServer (the
-           HTTP API), PeerClient (+ discovery + peer cache), SyncQueue
-           (background push), Tailscale (CLI wrapper), PeerProtocol (DTOs)
-Ui/        ShelfWindow, ShotCard, ArchiveWindow, theme
-Interop/   Win32 + the OLE drag source
-Program.cs / UpdateService.cs — Velopack bootstrap + GitHub Releases self-update
+src/Esgee.Core/          net10.0, no WPF anywhere in its closure
+  Store/     PNG/MP4 on disk + SQLite/FTS5 index (thread-safe; WAL)
+  Peers/     Opt-in machine-to-machine layer over Tailscale: PeerServer (the
+             HTTP API), PeerClient (+ discovery + peer cache), SyncQueue
+             (background push), Tailscale (NIC scan + CLI wrapper),
+             PeerProtocol (DTOs), Http (shared request parser/response
+             writer/bind policy for every esgee server)
+  Shares/    ShareClient (browse/join/push wire half), SharePusher,
+             ShareProtocol (DTOs)
+  Settings / Log / Cli — shared config, the audit log, headless query verbs
+
+src/Esgee/               the WPF app (references Core)
+  Capture/   ClipboardWatcher + HotkeyManager + OverlayWindow + CaptureController
+             + WindowFinder + CountdownWindow — the capture front ends
+             + ScreenRecorder + RecordController + RecordingIndicatorWindow —
+               the ffmpeg-backed recording front end
+             + FfmpegSetup — pinned, hash-verified first-run ffmpeg download
+  Ocr/       Background Windows.Media.Ocr indexer
+  Ui/        ShelfWindow, ShotCard, ArchiveWindow, ShareJoinWindow, theme
+  Interop/   Win32 + the OLE drag source
+  Program.cs / UpdateService.cs — Velopack bootstrap + GitHub Releases self-update
+
+src/Esgee.Node/          esgee-node, the headless peer/share server
+  --serve (peer archive) / --serve-share + --share-invite (the team share
+  node, docs/SHARES.md); ShareStore/ShareServer, ImageSharp thumb encoder;
+  published self-contained linux-x64 (runs on Windows too for local tests)
 ```
 
 ### The search pattern
@@ -67,8 +86,10 @@ Everything peer-shaped is opt-in and additive. With `PeersEnabled: false`
 peer code never runs — behavior is identical to pre-peer releases.
 
 **Security model in two sentences:** reachability is tailnet membership —
-the server binds exclusively to this machine's Tailscale IPv4 (from
-`tailscale ip -4`), never `0.0.0.0`, so only devices already admitted to
+the server binds exclusively to this machine's Tailscale IPv4 (read off the
+Tailscale adapter itself — the 100.64/10 address on the NIC that identifies
+as Tailscale's — with `tailscale ip -4` as the fallback for userspace-
+networking setups), never `0.0.0.0`, so only devices already admitted to
 your WireGuard-encrypted tailnet can even connect. Authorization is a shared
 secret: every request must carry the `X-Esgee-Token` header matching
 `PeerToken` (generated on first enable, compared in constant time), so a
@@ -76,9 +97,9 @@ stray tailnet device without the token gets nothing but 401s.
 
 HTTPS is deliberately absent: the tailnet link is already
 WireGuard-encrypted end to end, so TLS would add certificate management for
-zero additional confidentiality. If the tailscale CLI can't produce an
-address (not installed, logged out), the server simply doesn't start — it
-never falls back to a wider bind.
+zero additional confidentiality. If no Tailscale IPv4 can be found — the
+adapter is down or absent AND the CLI can't answer (not installed, logged
+out) — the server simply doesn't start; it never falls back to a wider bind.
 
 **Pairing (how the token travels):** machines exchange the token
 Bluetooth-style, from the tray, so nobody edits settings.json. "Pair a new
@@ -116,7 +137,14 @@ POST /ingest        multipart/form-data: "meta" JSON sidecar + "file" bytes
                     (+ optional "gif"/"thumb" parts for recordings)
 POST /pair          {pin, machine} → {token, machine}. PIN-authenticated (the
                     one tokenless route); answers only while a pairing window
-                    is open on the serving machine, 404 otherwise
+                    is open on the serving machine. With NO window open the
+                    route is indistinguishable from one that never existed —
+                    the generic 401 "missing or wrong token" without a token,
+                    the generic 404 with one — so an esgee server can't be
+                    fingerprinted pre-pairing. Clients tell a missed PIN from
+                    no-window by the 401 BODY ("wrong pin" appears only while
+                    a window is open); PROTOCOL.md "Pairing" has the
+                    normative outcome table
 ```
 
 **Why a hand-rolled TcpListener responder** rather than HttpListener or

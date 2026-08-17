@@ -82,9 +82,14 @@ public sealed class PeerClient : IDisposable
     // ---- local materialization ----------------------------------------------
 
     /// <summary>Cache path this peer's shot will occupy locally. Prefixed with
-    /// the id so two same-named captures from different days can't collide.</summary>
+    /// the id so two same-named captures from different days can't collide.
+    /// FileName is wire data — a hostile or compromised server could send
+    /// "..\..\Start Menu\…\x.bat" — so it is flattened through Sanitize (path
+    /// separators and every other invalid file-name char become '_') before it
+    /// may name a file under the cache. The numeric id prefix already blocks a
+    /// rooted path; Sanitize closes the relative-traversal half.</summary>
     public string CachePathFor(ShotDto shot)
-        => Path.Combine(CacheRoot, Sanitize(Peer.Name), $"{shot.Id}_{shot.FileName}");
+        => Path.Combine(CacheRoot, Sanitize(Peer.Name), $"{shot.Id}_{Sanitize(shot.FileName)}");
 
     public bool IsCached(ShotDto shot) => File.Exists(CachePathFor(shot));
 

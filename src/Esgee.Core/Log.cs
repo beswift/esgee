@@ -11,7 +11,17 @@ public static class Log
 
     private static readonly Lock Gate = new();
 
-    static Log() => Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
+    static Log()
+    {
+        // Guarded for the same reason Write() is: logging must never take the
+        // app down. Unguarded, a failure here (a hardened systemd unit —
+        // DynamicUser, ProtectHome, ProtectSystem=strict — leaves the resolved
+        // home unwritable) becomes a TypeInitializationException at the FIRST
+        // Log call, killing esgee-node during startup. If the directory can't
+        // exist, the process runs with logging disabled instead of not at all.
+        try { Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!); }
+        catch { /* Write() swallows the per-line failures that follow */ }
+    }
 
     // Control characters plus the Unicode line/paragraph separators - the
     // full set a log viewer might treat as "this line ended".

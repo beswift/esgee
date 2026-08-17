@@ -34,9 +34,32 @@ enum Log {
     // Trailing space, exactly like the C# build, so columns align.
     static func error(_ msg: String) { write("ERR ", msg) }
 
+    // Control characters plus the Unicode line/paragraph separators — the
+    // full set a log viewer might treat as "this line ended". Mirrors the
+    // C# build's IsLineBreaker (char.IsControl + U+2028/U+2029).
+    private static func isLineBreaker(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.value < 0x20 || (scalar.value >= 0x7F && scalar.value <= 0x9F)
+            || scalar.value == 0x2028 || scalar.value == 0x2029
+    }
+
     private static func write(_ level: String, _ msg: String) {
         gate.lock()
         defer { gate.unlock() }
+
+        // Client-supplied text (display names, search queries) rides inside
+        // messages, and this file is what operators and agents reconstruct
+        // history from — an embedded newline would forge whole audit lines,
+        // so one event is always exactly one line (and control characters
+        // can't play terminal tricks either). Same rule as the C# Log.Write.
+        var msg = msg
+        if msg.unicodeScalars.contains(where: isLineBreaker) {
+            let space: Unicode.Scalar = " "
+            var scalars = String.UnicodeScalarView()
+            for s in msg.unicodeScalars {
+                scalars.append(isLineBreaker(s) ? space : s)
+            }
+            msg = String(scalars)
+        }
 
         guard let data = "\(clock.string(from: Date())) \(level) \(msg)\n"
             .data(using: .utf8) else { return }

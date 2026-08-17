@@ -353,6 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Task { _ = await self.ensureServer() }
         menuBar?.peersChanged() // next menu open recounts the fleet
+        archive?.refreshMachineSwitcher() // an open window gains the switcher now
     }
 
     /// 24 random bytes as uppercase hex — same mint as Windows, so tokens are

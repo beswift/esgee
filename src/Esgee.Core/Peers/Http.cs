@@ -14,6 +14,39 @@ namespace Esgee.Peers;
 /// not these types.</summary>
 internal static class HttpIo
 {
+    // Every response write carries its own deadline. Socket.SendTimeout
+    // governs only SYNCHRONOUS sends — the same trap the request-read
+    // deadline exists for on the other side — so an async write to a reader
+    // that stopped draining (a zero-receive-window stall, a laptop asleep
+    // mid-download) would otherwise await forever, and its connection slot
+    // would be pinned until process restart; enough of those and the
+    // connection cap locks every member out. Per-chunk, not per-response, so
+    // no total-size math ever punishes a big legitimate file: 64 KB within
+    // 60s is ~1 KB/s, generous for any live tailnet link and fatal only to a
+    // dead one. On expiry the write throws IOException — the connection
+    // handler's finally then closes the socket and releases the slot.
+    private const int WriteChunkBytes = 64 * 1024;
+    private static readonly TimeSpan WriteChunkDeadline = TimeSpan.FromSeconds(60);
+
+    private static async Task WriteWithDeadlineAsync(NetworkStream stream, ReadOnlyMemory<byte> data)
+    {
+        for (var offset = 0; offset < data.Length; offset += WriteChunkBytes)
+        {
+            var chunk = data.Slice(offset, Math.Min(WriteChunkBytes, data.Length - offset));
+            using var cts = new CancellationTokenSource(WriteChunkDeadline);
+            try
+            {
+                await stream.WriteAsync(chunk, cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                throw new IOException(
+                    $"response write stalled (receiver took {chunk.Length} bytes " +
+                    $"longer than {(int)WriteChunkDeadline.TotalSeconds}s to drain)");
+            }
+        }
+    }
+
     public static Task WriteJsonAsync(NetworkStream stream, int status, object body)
         => WriteBytesAsync(stream, status,
             "application/json; charset=utf-8",
@@ -27,8 +60,8 @@ internal static class HttpIo
             $"Content-Type: {contentType}\r\n" +
             $"Content-Length: {body.Length}\r\n" +
             "Connection: close\r\n\r\n");
-        await stream.WriteAsync(head);
-        await stream.WriteAsync(body);
+        await WriteWithDeadlineAsync(stream, head);
+        await WriteWithDeadlineAsync(stream, body);
     }
 
     public static async Task WriteFileAsync(NetworkStream stream, string path)
@@ -43,8 +76,14 @@ internal static class HttpIo
             $"Content-Type: {ContentType(path)}\r\n" +
             $"Content-Length: {fs.Length}\r\n" +
             "Connection: close\r\n\r\n");
-        await stream.WriteAsync(head);
-        await fs.CopyToAsync(stream);
+        await WriteWithDeadlineAsync(stream, head);
+
+        // Manual copy loop instead of CopyToAsync: each network write goes
+        // through the deadline above.
+        var buffer = new byte[WriteChunkBytes];
+        int read;
+        while ((read = await fs.ReadAsync(buffer)) > 0)
+            await WriteWithDeadlineAsync(stream, buffer.AsMemory(0, read));
     }
 
     public static string ContentType(string path) =>

@@ -51,8 +51,9 @@ Project Northwind
 
 ## Where a share lives
 
-**A headless `esgee --serve-share` node on an always-on box, reached over
-Tailscale.** No new infrastructure, no accounts, no hosting bill, and it
+**A headless `esgee-node --serve-share` node on an always-on box, reached over
+Tailscale.** (The verb belongs to the `esgee-node` binary alone — the WPF
+`esgee.exe` deliberately never serves shares and ignores the flag.) No new infrastructure, no accounts, no hosting bill, and it
 reuses the peer server almost verbatim.
 
 Decided 2026-08-17: the node runs on **minimax**, the box already hosting the
@@ -148,9 +149,15 @@ responder proved platform-neutral as-is — the share server reuses its
 request parser, response writer, and bind policy verbatim — and the
 no-Kestrel rationale holds even better on a headless node.
 
-The node never OCRs (no WinRT dependency): items arrive with sidecar text,
-and the client-side rule below (don't push OCR-pending images) closes the
-only gap that policy leaves.
+The node never OCRs (no WinRT dependency): items arrive with sidecar text.
+The client-side rule (SharePusher): an image whose OCR is still pending is
+NOT pushed — the pusher waits briefly for the local queue, then refuses with
+an error rather than mint an item no search will ever find, because unlike
+peer sync there is no receiver-side sweep to fill the hole and no backfill
+route for a client to fill it later. The one gap that remains is deliberate:
+a client with OCR disabled has no text and never will, so its image items
+ship textless and stay invisible to `/share/search` (the recency feed still
+shows them).
 
 ## Joining — no accounts, still person-level identity
 
@@ -332,10 +339,12 @@ part that gets harder the longer it waits.
    involving the team.
 3. Retention default — 90 days, or unlimited until someone complains?
    (The shipped node defaults to unlimited; `--retention` opts in.)
-4. Does a share want its own OCR pass? Items arrive with sidecar text from
-   whichever engine took them, which is correct; but a share node with no
-   OCR engine cannot fill a hole left by `ocr_text: null`. Simplest answer:
-   the sharing client must not push an image whose OCR is still pending —
-   wait for it, exactly as `SyncQueue` already does.
+4. ~~Does a share want its own OCR pass?~~ **Resolved: no.** Items arrive
+   with sidecar text from whichever engine took them. The sharing client
+   must not push an image whose OCR is still pending — `SharePusher` waits
+   for it (up to 30s) and then *refuses* rather than pushing textless,
+   since no sweep or backfill can ever repair a hole on a share. Exception:
+   with OCR disabled in settings the push proceeds textless immediately —
+   those items are simply never searchable on the share.
 5. Is one share per team right, or one per project? The design supports many;
    the UX gets busy past about three.

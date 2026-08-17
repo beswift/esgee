@@ -78,6 +78,7 @@ public sealed class ShareClient : IDisposable
                     (since is null ? "" : $"&since={Uri.EscapeDataString(since)}");
         var page = await _http.GetFromJsonAsync<ShareItemsPage>(route, PeerProtocol.Json)
                    ?? new ShareItemsPage([], []);
+        DropInvalidIds(page);
         Log.Info($"share {BaseUrl}: /share/items -> {page.Items.Count} items, {page.Deleted.Count} tombstones");
         return page;
     }
@@ -86,6 +87,9 @@ public sealed class ShareClient : IDisposable
     {
         var list = await _http.GetFromJsonAsync<List<ShareItemDto>>(
             $"share/search?q={Uri.EscapeDataString(query)}", PeerProtocol.Json) ?? [];
+        var dropped = list.RemoveAll(i => !IsValidItemId(i.Item));
+        if (dropped > 0)
+            Log.Warn($"share {BaseUrl}: dropped {dropped} search result(s) with malformed item ids");
         Log.Info($"share {BaseUrl}: /share/search \"{query}\" -> {list.Count} items");
         return list;
     }
@@ -94,9 +98,40 @@ public sealed class ShareClient : IDisposable
     /// deleted items vanish from this route and surface as tombstones instead.</summary>
     public async Task<ShareItemDto?> ItemAsync(string item)
     {
+        if (!IsValidItemId(item)) return null;
         using var resp = await _http.GetAsync($"share/items/{Uri.EscapeDataString(item)}");
         if (!resp.IsSuccessStatusCode) return null;
-        return await resp.Content.ReadFromJsonAsync<ShareItemDto>(PeerProtocol.Json);
+        var dto = await resp.Content.ReadFromJsonAsync<ShareItemDto>(PeerProtocol.Json);
+        return dto is not null && IsValidItemId(dto.Item) ? dto : null;
+    }
+
+    /// <summary>Item ids become LOCAL FILE NAMES (CachePathFor), so their
+    /// shape is enforced at the trust boundary, not assumed: "itm_" plus
+    /// ASCII alphanumerics, the shape the node mints (docs/PROTOCOL.md "Item
+    /// identity" — "itm_" + 10 url-safe characters; a modest length range is
+    /// tolerated so a future longer id doesn't brick older clients). Anything
+    /// else — separators, dots, a rooted path like C:\…\Startup\x — is a
+    /// hostile or corrupt server; Path.Combine would happily treat such an
+    /// "id" as an escape from the cache directory, handing the server an
+    /// arbitrary file write on whoever browses the share.</summary>
+    public static bool IsValidItemId(string? id)
+    {
+        if (id is null || id.Length is < 5 or > 64 ||
+            !id.StartsWith("itm_", StringComparison.Ordinal)) return false;
+        for (var i = 4; i < id.Length; i++)
+            if (!char.IsAsciiLetterOrDigit(id[i])) return false;
+        return true;
+    }
+
+    /// <summary>Malformed ids never leave the wire layer: an item with one
+    /// can't be rendered, cached, or (critically) turned into a path.</summary>
+    private void DropInvalidIds(ShareItemsPage page)
+    {
+        var dropped = page.Items.RemoveAll(i => !IsValidItemId(i.Item)) +
+                      page.Deleted.RemoveAll(t => !IsValidItemId(t.Item));
+        if (dropped > 0)
+            Log.Warn($"share {BaseUrl}: dropped {dropped} entr(ies) with malformed item ids " +
+                     "(not the id shape an esgee share node mints — hostile or corrupt server?)");
     }
 
     public Task<byte[]> ThumbAsync(string item)
@@ -149,10 +184,18 @@ public sealed class ShareClient : IDisposable
     /// share-assigned id names the cache file; file_ext supplies the stored
     /// extension so a JPEG a teammate shared isn't dragged out (or pulled in)
     /// labeled .png. SafeExtension re-checks the server's value and falls
-    /// back to the kind's default — also what a pre-file_ext node gets.</summary>
+    /// back to the kind's default — also what a pre-file_ext node gets.
+    /// The id is wire data used as a path component, so it is re-validated
+    /// here even though every fetch path already filters: defense in depth
+    /// against a server-chosen string escaping the cache directory.</summary>
     public string CachePathFor(ShareItemDto item)
-        => Path.Combine(PeerClient.CacheRoot, "share_" + Sanitize(Name),
+    {
+        if (!IsValidItemId(item.Item))
+            throw new InvalidOperationException(
+                $"share item id '{item.Item}' is not an esgee item id; refusing to use it as a file name");
+        return Path.Combine(PeerClient.CacheRoot, "share_" + Sanitize(Name),
             item.Item + ShotStore.SafeExtension(item.FileExt, item.Kind));
+    }
 
     /// <summary>Downloads the item (and, for recordings, the GIF + preview
     /// frame siblings) into the cache, then returns a Shot pointing at the

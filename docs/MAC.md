@@ -62,20 +62,27 @@ Deliberately mirrors `src/Esgee/` so the two codebases stay readable side by
 side and NOTES.md's architecture rule ("capture sources feed one pipeline")
 transfers verbatim.
 
+As shipped under `mac/Sources/` (updated to match the written code):
+
 ```
 Capture/   HotkeyManager (Carbon RegisterEventHotKey)
-           OverlayController + OverlayWindow (frozen-frame region select,
-             one window per NSScreen)
+           OverlayController (frozen-frame region select, one window
+             per NSScreen) + ScreenGrabber (SCScreenshotManager)
            CaptureController — the single pipeline: save → shelf →
              pasteboard → index
-           CountdownWindow (timed capture)
+           CountdownPill (timed capture)
            ClipboardWatcher (NSPasteboard changeCount poll)
+Core/      Shot (the row shape) + Protocol (Codable DTOs)
 Store/     ShotStore — thin wrapper over system libsqlite3, identical schema
 Ocr/       OcrIndexer — Vision, background queue, backlog sweep on launch
-Peers/     PeerServer (NWListener), PeerClient, Pairing, SyncQueue,
-           Tailnet (address discovery), Protocol (Codable DTOs)
-Ui/        ShelfPanel, ShotCardView, ArchiveWindow, Theme
-App/       AppDelegate, MenuBarController, Settings, Log, Updater (Sparkle)
+Peers/     PeerServer (NWListener) + HttpRequest/Multipart parsing,
+           PeerClient, Pairing (+ PairHostWindow/PairJoinWindow), SyncQueue,
+           Tailnet (address discovery)
+Ui/        ShelfPanel, ShotCardView, ShotPasteboard, ArchiveWindow
+           (+ ArchiveGridView), Theme
+App/       main, AppDelegate, MenuBarController (also owns the Sparkle
+           updater wiring — there is no separate Updater file; BLACKBOOK's
+           Sparkle-removal instructions point there), Settings, Log
 ```
 
 ## Capture
@@ -239,21 +246,25 @@ address. Hand-rolled HTTP/1.1 parsing for the same reason as Windows — eight
 fixed routes serving one trusted client, and pulling in SwiftNIO to serve
 them is the Kestrel mistake in a different language.
 
-**Tailnet address discovery** should be done better than on Windows. Today the
-C# side shells out to `tailscale ip -4`. On macOS that CLI is a moving target:
-the standalone build puts it at `/usr/local/bin/tailscale`, the Mac App Store
-build buries it inside `/Applications/Tailscale.app/Contents/MacOS/` and needs
-a user-created symlink. Instead:
+**Tailnet address discovery** avoids depending on the CLI's location. On
+macOS that CLI is a moving target: the standalone build puts it at
+`/usr/local/bin/tailscale`, the Mac App Store build buries it inside
+`/Applications/Tailscale.app/Contents/MacOS/` and needs a user-created
+symlink. So:
 
-- **Primary**: `getifaddrs()`, take the first IPv4 in `100.64.0.0/10`. Tailscale
-  addresses always live in that CGNAT range. No CLI, no path guessing, no
-  subprocess, works with either Tailscale distribution.
+- **Primary**: `getifaddrs()`, take the IPv4 in `100.64.0.0/10` off the
+  Tailscale interface. Tailscale addresses always live in that CGNAT range.
+  No CLI, no path guessing, no subprocess, works with either Tailscale
+  distribution.
 - **Fallback, for *discovery* only**: `tailscale status --json` to enumerate
   peer nodes, since interface scanning can find *our* address but not the
   fleet. Manual `Peers` settings entries remain the last resort, as today.
 
-This is worth backporting to Windows — same range, same `GetAdaptersAddresses`
-one-liner, and it removes a subprocess from startup.
+The C# side works the same way since the mesh branch:
+`Esgee.Core/Peers/Tailscale.SelfIPv4()` scans the Tailscale NIC for the
+100.64/10 address first and shells out to `tailscale ip -4` only as the
+fallback (userspace networking, no local adapter) — the backport this
+section used to call for is done.
 
 **Client, pairing, sync**: direct ports. The Mac shows the same 6-digit PIN
 window, discovers the same candidates, and adopts the token the same way.
@@ -288,16 +299,23 @@ Same repository. The protocol doc is the shared spine and splitting the repo
 would immediately let the two implementations drift.
 
 ```
-src/Esgee/        the Windows app (unchanged)
-mac/project.yml   XcodeGen spec — checked in
+src/Esgee/        the Windows app
+mac/project.yml   XcodeGen spec — checked in, and the SOURCE OF TRUTH for
+                  Info.plist keys (TCC usage string, SUFeedURL, LSUIElement)
+                  and the entitlements
 mac/Sources/      Swift sources
-mac/Resources/    Info.plist, icons, entitlements
 docs/PROTOCOL.md  normative for both
 ```
 
 XcodeGen rather than a checked-in `.xcodeproj`: the project file is generated
 from a small YAML spec, so it produces readable diffs, never conflicts, and
 an agent can regenerate it headlessly. `.xcodeproj` goes in `.gitignore`.
+
+`mac/Resources/` is **not in the repo**: `xcodegen generate` materializes
+`Resources/Info.plist` and `Resources/esgee.entitlements` from `project.yml`'s
+`info:` / `entitlements:` blocks. Edit `project.yml`, never the generated
+files — hand-edits there are silently overwritten on the next generate. No
+app icons exist yet anywhere.
 
 ## Deliberate non-goals for v1
 

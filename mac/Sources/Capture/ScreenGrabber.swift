@@ -77,6 +77,14 @@ enum ScreenGrabber {
     /// HIGHEST scale among intersected displays so a Retina region never gets
     /// downsampled by a 1x neighbour (docs/MAC.md). Returns PNG bytes and the
     /// pixel size.
+    ///
+    /// PERF (deliberate, revisit): this render + PNG encode runs on the main
+    /// actor — SPEC.md declares ScreenGrabber @MainActor and every begin*
+    /// flow calls from a MainActor task — so a fullscreen multi-display
+    /// Retina capture (~100+ MP) stalls hotkeys and the shelf for hundreds
+    /// of ms. Only save() (sha256 + DB) is detached today. The fix for the
+    /// perf pass is a nonisolated composite returning boxed CGImage/Data;
+    /// per-contract for now, NOT a compile fix.
     static func composite(rectPoints: CGRect, from frames: [FrozenDisplay])
         throws -> (png: Data, size: PixelSize) {
         let rect = rectPoints.standardized

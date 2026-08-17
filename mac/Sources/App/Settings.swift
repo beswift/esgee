@@ -134,17 +134,36 @@ struct Settings: Codable, Sendable {
     }
 
     static func load() -> Settings {
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            do {
-                return try JSONDecoder().decode(Settings.self, from: Data(contentsOf: fileURL))
-            } catch {
-                Log.warn("settings unreadable, using defaults: \(error.localizedDescription)")
-            }
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            let fresh = Settings()
+            fresh.save() // so there's something to edit on first run
+            return fresh
         }
 
-        let fresh = Settings()
-        fresh.save() // so there's something to edit on first run
-        return fresh
+        do {
+            var loaded = try JSONDecoder().decode(Settings.self, from: Data(contentsOf: fileURL))
+            loaded.enforceInvariants()
+            return loaded
+        } catch {
+            // Unreadable is NOT replaceable: the file may hold a PeerToken
+            // recoverable only by re-pairing, and hand-editing it is a
+            // documented workflow. Run on defaults but leave the file exactly
+            // as the user left it — same rule as the C# Settings.Load.
+            Log.warn("settings unreadable, running on defaults; " +
+                     "file left for repair: \(error.localizedDescription)")
+        }
+        return Settings()
+    }
+
+    /// Structural rules the rest of the app may assume after load — the Mac
+    /// subset of the C# EnforceInvariants. Hand-editing settings.json is a
+    /// documented workflow, and a blank ArchiveRoot (a template copied from
+    /// another machine) must degrade to the default, never make the app
+    /// unlaunchable. Heals in memory only; the file stays as written.
+    mutating func enforceInvariants() {
+        if archiveRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            archiveRoot = Settings.defaultArchiveRoot()
+        }
     }
 
     func save() {

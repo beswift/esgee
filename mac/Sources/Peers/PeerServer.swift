@@ -403,12 +403,21 @@ final class PeerServer: @unchecked Sendable {
             return
         }
 
-        var ext = "." + ((meta.fileName ?? "") as NSString).pathExtension
-        if ext == "." { ext = meta.kind == "video" ? ".mp4" : ".png" }
+        // The extension is client-supplied wire data: validated down to a
+        // short alphanumeric tail or replaced with the kind's default —
+        // NSString.pathExtension happily returns spaces, quotes, and
+        // arbitrarily long tails (docs/PROTOCOL.md; same rule as Windows).
+        let rawExt = ((meta.fileName ?? "") as NSString).pathExtension
+        let ext = ShotStore.safeExtension("." + rawExt, kind: meta.kind)
 
         // File before row, same as a local capture — drag-out hands paths to
         // the OS and the index must never point at bytes that aren't there.
-        let dest = store.planIngestPath(takenAt: takenAt, ext: ext)
+        // Filed by the SENDER's wall clock (the offset inside taken_at), so
+        // this tree and the sender's stay the same artifact across zones.
+        let dest = store.planIngestPath(
+            takenAt: takenAt,
+            timeZone: IsoStamp.embeddedTimeZone(of: meta.takenAt) ?? .current,
+            ext: ext)
         try fileBytes.write(to: URL(fileURLWithPath: dest))
 
         // Recordings arrive with their sidecar files so the local archive gets
@@ -423,8 +432,11 @@ final class PeerServer: @unchecked Sendable {
         }
 
         // takenAtRaw travels verbatim — this machine did not mint it and must
-        // not re-format another machine's UTC offset.
-        let (shot, duplicate) = store.ingest(
+        // not re-format another machine's UTC offset. A DB failure throws out
+        // of this handler: no 200 is written and the connection drops, so the
+        // sender's backoff loop retries instead of marking the shot pushed
+        // (same shape as the C# HandleIngestAsync).
+        let (shot, duplicate) = try store.ingest(
             path: dest, sha256: sha, takenAtRaw: meta.takenAt,
             width: meta.width, height: meta.height,
             kind: meta.kind, durationMs: meta.durationMs,

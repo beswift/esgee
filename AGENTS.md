@@ -25,8 +25,22 @@ with the `X-Esgee-Token` header from settings.json.
 
 ## Working on the codebase
 
-- **Stack:** C# / .NET 10, WPF, single project at `src/Esgee/`. Build with
-  `dotnet build src/Esgee/Esgee.csproj`. The SDK must be .NET 10+.
+- **Stack:** C# / .NET 10, three projects since the Core/Node split
+  (docs/SHARES.md "The node is a Linux binary"):
+  - `src/Esgee.Core/` — everything desktop-free: `Store/`, `Peers/`,
+    `Shares/`, `Settings`, `Log`, the headless CLI verbs. **Portable code
+    goes here**, never in the WPF project — the node can't reference
+    anything under `src/Esgee/`.
+  - `src/Esgee/` — the WPF app (capture, shelf, archive UI, OCR, tray);
+    references Core.
+  - `src/Esgee.Node/` — `esgee-node`, the headless Linux-capable peer/share
+    server; references Core.
+
+  Build **both** `dotnet build src/Esgee/Esgee.csproj` and
+  `dotnet build src/Esgee.Node/Esgee.Node.csproj` — a Core change that
+  compiles for the app can still break the node. The SDK must be .NET 10+.
+  There is also an uncompiled Swift Mac app under `mac/` (docs/MAC.md);
+  dotnet builds never touch it.
 - **The running app locks its binaries.** If an installed copy is running,
   builds that target its folder fail — stop the `esgee` process first.
   Never hand-publish over `%LOCALAPPDATA%\esgee\current\` — that directory

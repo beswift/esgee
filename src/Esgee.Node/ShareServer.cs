@@ -34,7 +34,10 @@ public sealed class ShareServer : IDisposable
 
     // Two simultaneous posts of the same capture must not race past the sha
     // probe and mint two item ids for one sha256 — item identity is the anchor
-    // comments hang off. One post at a time; posts are milliseconds.
+    // comments hang off. The gate guards ONLY that probe→mint window (plus the
+    // same-volume renames that publish the staged bytes); parsing, hashing,
+    // and writing the body to disk happen before it, so one member's 200 MB
+    // recording never serializes everyone else's small posts behind it.
     private readonly SemaphoreSlim _postGate = new(1, 1);
 
     // This is the one esgee server deliberately reachable by devices the
@@ -325,28 +328,35 @@ public sealed class ShareServer : IDisposable
             since = parsed;
         }
 
-        // Timestamps compare parsed, not lexically — clients echo back server
-        // timestamps, but nothing forces every writer to one offset format.
+        // Clients echo back server timestamps but nothing forces the echo to
+        // keep one offset format, so the cursor is PARSED, then re-stamped
+        // into the store's own canonical shape — from there the filter, sort,
+        // and limit run in SQL against the uniformly-stamped rows. The LINQ
+        // filter this replaces loaded every live item AND every tombstone
+        // (kept forever) into memory on each notification-dot poll.
+        var cursor = since is { } cut ? ShareStore.CanonicalStamp(cut) : null;
+
         List<ShareItemRow> rows;
         bool? truncated = null;
-        if (since is { } cut)
+        if (cursor is not null)
         {
             // A delta poll pages OLDEST activity first: when more than n items
             // changed, the client's advanced cursor still lies before every
             // row held back, so the next poll resumes instead of skipping —
             // newest-first would silently drop exactly the old items a fresh
-            // comment resurfaced. truncated:true says another poll is due.
-            var changed = _store.LiveItems()
-                .Where(r => After(r.SharedAt, cut) || After(r.LatestCommentAt, cut))
-                .OrderBy(ActivityAt).ToList();
-            if (changed.Count > n) truncated = true;
-            rows = changed.Take(n).ToList();
+            // comment resurfaced. truncated:true says another poll is due
+            // (fetched as n+1 so truncation costs no second query).
+            rows = _store.LiveItemsChangedSince(cursor, n + 1);
+            if (rows.Count > n)
+            {
+                truncated = true;
+                rows.RemoveAt(rows.Count - 1);
+            }
         }
         else
             rows = _store.LiveItems(n);
 
-        var stones = _store.Tombstones()
-            .Where(t => since is not { } c || After(t.DeletedAt, c))
+        var stones = _store.Tombstones(cursor)
             .Select(t => new ShareTombstoneDto(t.ItemId, t.DeletedAt))
             .ToList();
 
@@ -355,19 +365,6 @@ public sealed class ShareServer : IDisposable
                  $"{(truncated is true ? " (truncated)" : "")} from {remote}");
         await HttpIo.WriteJsonAsync(stream, 200,
             new ShareItemsPage(rows.Select(r => ToDto(r)).ToList(), stones, truncated));
-    }
-
-    private static bool After(string? timestamp, DateTimeOffset cut)
-        => timestamp is not null &&
-           DateTimeOffset.TryParse(timestamp, out var at) && at > cut;
-
-    /// <summary>When an item last moved: its newest comment, else its share
-    /// stamp — the value a since-poll cursor advances over.</summary>
-    private static DateTimeOffset ActivityAt(ShareItemRow r)
-    {
-        var shared = DateTimeOffset.TryParse(r.SharedAt, out var s) ? s : DateTimeOffset.MinValue;
-        return r.LatestCommentAt is not null &&
-               DateTimeOffset.TryParse(r.LatestCommentAt, out var c) && c > shared ? c : shared;
     }
 
     private async Task HandleItemDetailAsync(NetworkStream stream, string itemId)
@@ -444,96 +441,149 @@ public sealed class ShareServer : IDisposable
 
     /// <summary>POST /share/items — the explicit per-capture act. Dedupe is by
     /// sha256 against LIVE items: a re-share answers with the existing item and
-    /// duplicate:true, so every member keeps one name for one capture.</summary>
+    /// duplicate:true, so every member keeps one name for one capture. The
+    /// heavy work — multipart parse, hashing the body, writing the bytes —
+    /// happens with NO gate held: bytes are staged under the archive root
+    /// first, and _postGate covers only the sha probe, the same-volume renames
+    /// that publish the staged files, and the row mint. Response writes hold
+    /// no gate either — a slow reader must not stall other members' posts.</summary>
     private async Task HandlePostItemAsync(NetworkStream stream, HttpRequest req,
         ShareMember member, string remote)
     {
-        await _postGate.WaitAsync(_cts.Token);
+        var parts = Multipart.Parse(req);
+        if (parts is null)
+        {
+            await HttpIo.WriteJsonAsync(stream, 400, new { error = "expected multipart/form-data" });
+            return;
+        }
+
+        var metaPart = parts.FirstOrDefault(p => p.Name == "meta");
+        var filePart = parts.FirstOrDefault(p => p.Name == "file");
+        if (metaPart is null || filePart is null)
+        {
+            await HttpIo.WriteJsonAsync(stream, 400, new { error = "need 'meta' and 'file' parts" });
+            return;
+        }
+
+        SharePostMeta? meta;
         try
         {
-            var parts = Multipart.Parse(req);
-            if (parts is null)
+            meta = JsonSerializer.Deserialize<SharePostMeta>(metaPart.Body, PeerProtocol.Json);
+        }
+        catch (Exception ex)
+        {
+            await HttpIo.WriteJsonAsync(stream, 400, new { error = $"bad meta json: {ex.Message}" });
+            return;
+        }
+        if (meta is null || !DateTimeOffset.TryParse(meta.TakenAt, out var takenAt))
+        {
+            await HttpIo.WriteJsonAsync(stream, 400, new { error = "bad meta" });
+            return;
+        }
+
+        var sha = Convert.ToHexString(SHA256.HashData(filePart.Body));
+        if (!sha.Equals(meta.Sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            await HttpIo.WriteJsonAsync(stream, 400, new { error = "sha256 mismatch" });
+            return;
+        }
+
+        // Unlocked fast path: the common re-share answers without writing a
+        // byte. Racing posts are caught by the authoritative re-probe below.
+        if (_store.FindLiveBySha(sha) is { } live)
+        {
+            Log.Info($"share: post from {member.MemberId} deduplicated (sha match, {live.ItemId})");
+            await HttpIo.WriteJsonAsync(stream, 200, ToDto(live, duplicate: true));
+            return;
+        }
+
+        var kind = string.IsNullOrEmpty(meta.Kind) ? "image" : meta.Kind;
+        var ext = ShotStore.SafeExtension(
+            System.IO.Path.GetExtension(meta.FileName ?? filePart.FileName ?? ""), kind);
+
+        // Stage the bytes inside the archive root (same volume as the yyyy/MM
+        // tree) so publishing under the gate is a rename, not a copy. Distinct
+        // suffixes per part — ext could itself be ".gif" or ".png".
+        var stage = System.IO.Path.Combine(_store.Shots.Root,
+            ".ingest-" + Guid.NewGuid().ToString("N")[..12]);
+        var stagedFile = stage + "-file" + ext;
+        string? stagedGif = null, stagedThumb = null;
+
+        ShareItemRow item;
+        var duplicate = false;
+        try
+        {
+            await System.IO.File.WriteAllBytesAsync(stagedFile, filePart.Body, _cts.Token);
+            if (parts.FirstOrDefault(p => p.Name == "gif") is { } gif)
             {
-                await HttpIo.WriteJsonAsync(stream, 400, new { error = "expected multipart/form-data" });
-                return;
+                stagedGif = stage + "-gif.gif";
+                await System.IO.File.WriteAllBytesAsync(stagedGif, gif.Body, _cts.Token);
+            }
+            if (parts.FirstOrDefault(p => p.Name == "thumb") is { } thumb)
+            {
+                stagedThumb = stage + "-thumb.png";
+                await System.IO.File.WriteAllBytesAsync(stagedThumb, thumb.Body, _cts.Token);
             }
 
-            var metaPart = parts.FirstOrDefault(p => p.Name == "meta");
-            var filePart = parts.FirstOrDefault(p => p.Name == "file");
-            if (metaPart is null || filePart is null)
-            {
-                await HttpIo.WriteJsonAsync(stream, 400, new { error = "need 'meta' and 'file' parts" });
-                return;
-            }
-
-            SharePostMeta? meta;
+            await _postGate.WaitAsync(_cts.Token);
             try
             {
-                meta = JsonSerializer.Deserialize<SharePostMeta>(metaPart.Body, PeerProtocol.Json);
+                // Authoritative re-probe: two simultaneous posts of one capture
+                // must not both pass the unlocked fast path and mint two ids.
+                if (_store.FindLiveBySha(sha) is { } existing)
+                {
+                    item = existing;
+                    duplicate = true;
+                }
+                else
+                {
+                    var dest = _store.Shots.PlanIngestPath(takenAt, ext);
+                    System.IO.File.Move(stagedFile, dest, overwrite: true);
+                    if (stagedGif is not null)
+                        System.IO.File.Move(stagedGif,
+                            System.IO.Path.ChangeExtension(dest, ".gif"), overwrite: true);
+                    if (stagedThumb is not null)
+                        System.IO.File.Move(stagedThumb, dest + ".png", overwrite: true);
+
+                    // Origin is deliberately "" — a share item never records which
+                    // machine a capture came from (docs/SHARES.md "The invariant").
+                    var (shot, dupShots) = _store.Shots.Ingest(dest, sha, takenAt,
+                        meta.Width, meta.Height, kind, meta.DurationMs,
+                        meta.OcrText, meta.OcrEngineVersion ?? "", origin: "");
+
+                    if (dupShots)
+                    {
+                        // A shots row without a live item (an interrupted earlier post):
+                        // keep the original file, drop the fresh copy, reuse the row.
+                        try { System.IO.File.Delete(dest); } catch { }
+                        try { System.IO.File.Delete(System.IO.Path.ChangeExtension(dest, ".gif")); } catch { }
+                        try { System.IO.File.Delete(dest + ".png"); } catch { }
+                    }
+
+                    item = _store.AddItem(shot, member.MemberId);
+                    Log.Info($"share: {item.ItemId} shared by {member.MemberId} ('{member.DisplayName}') — " +
+                             $"{kind} {shot.Width}x{shot.Height}, " +
+                             $"ocr {(meta.OcrText is null ? "absent" : $"sidecar [{meta.OcrEngineVersion}]")}, " +
+                             $"from {remote}");
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                await HttpIo.WriteJsonAsync(stream, 400, new { error = $"bad meta json: {ex.Message}" });
-                return;
+                _postGate.Release();
             }
-            if (meta is null || !DateTimeOffset.TryParse(meta.TakenAt, out var takenAt))
-            {
-                await HttpIo.WriteJsonAsync(stream, 400, new { error = "bad meta" });
-                return;
-            }
-
-            var sha = Convert.ToHexString(SHA256.HashData(filePart.Body));
-            if (!sha.Equals(meta.Sha256, StringComparison.OrdinalIgnoreCase))
-            {
-                await HttpIo.WriteJsonAsync(stream, 400, new { error = "sha256 mismatch" });
-                return;
-            }
-
-            if (_store.FindLiveBySha(sha) is { } existing)
-            {
-                Log.Info($"share: post from {member.MemberId} deduplicated (sha match, {existing.ItemId})");
-                await HttpIo.WriteJsonAsync(stream, 200, ToDto(existing, duplicate: true));
-                return;
-            }
-
-            var kind = string.IsNullOrEmpty(meta.Kind) ? "image" : meta.Kind;
-            var ext = ShotStore.SafeExtension(
-                System.IO.Path.GetExtension(meta.FileName ?? filePart.FileName ?? ""), kind);
-
-            var dest = _store.Shots.PlanIngestPath(takenAt, ext);
-            await System.IO.File.WriteAllBytesAsync(dest, filePart.Body, _cts.Token);
-            if (parts.FirstOrDefault(p => p.Name == "gif") is { } gif)
-                await System.IO.File.WriteAllBytesAsync(
-                    System.IO.Path.ChangeExtension(dest, ".gif"), gif.Body, _cts.Token);
-            if (parts.FirstOrDefault(p => p.Name == "thumb") is { } thumb)
-                await System.IO.File.WriteAllBytesAsync(dest + ".png", thumb.Body, _cts.Token);
-
-            // Origin is deliberately "" — a share item never records which
-            // machine a capture came from (docs/SHARES.md "The invariant").
-            var (shot, dupShots) = _store.Shots.Ingest(dest, sha, takenAt,
-                meta.Width, meta.Height, kind, meta.DurationMs,
-                meta.OcrText, meta.OcrEngineVersion ?? "", origin: "");
-
-            if (dupShots)
-            {
-                // A shots row without a live item (an interrupted earlier post):
-                // keep the original file, drop the fresh copy, reuse the row.
-                try { System.IO.File.Delete(dest); } catch { }
-                try { System.IO.File.Delete(System.IO.Path.ChangeExtension(dest, ".gif")); } catch { }
-                try { System.IO.File.Delete(dest + ".png"); } catch { }
-            }
-
-            var item = _store.AddItem(shot, member.MemberId);
-            Log.Info($"share: {item.ItemId} shared by {member.MemberId} ('{member.DisplayName}') — " +
-                     $"{kind} {shot.Width}x{shot.Height}, " +
-                     $"ocr {(meta.OcrText is null ? "absent" : $"sidecar [{meta.OcrEngineVersion}]")}, " +
-                     $"from {remote}");
-            await HttpIo.WriteJsonAsync(stream, 200, ToDto(item, duplicate: false));
         }
         finally
         {
-            _postGate.Release();
+            // Any staged file still on disk was never published (dedupe under
+            // the gate, or a failure anywhere above) — remove it.
+            foreach (var stray in new[] { stagedFile, stagedGif, stagedThumb })
+                try { if (stray is not null && System.IO.File.Exists(stray)) System.IO.File.Delete(stray); }
+                catch { /* orphaned .ingest-* files are harmless and grep-able */ }
         }
+
+        if (duplicate)
+            Log.Info($"share: post from {member.MemberId} deduplicated (sha match, {item.ItemId})");
+        await HttpIo.WriteJsonAsync(stream, 200, ToDto(item, duplicate));
     }
 
     private async Task HandleDeleteAsync(NetworkStream stream, string itemId,

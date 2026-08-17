@@ -314,11 +314,14 @@ public sealed class ShareStore : IDisposable
 
     // ---- items ----------------------------------------------------------------
 
+    // The explicit aliases exist for LiveItemsChangedSince, which wraps this
+    // select and filters/sorts on them in SQL.
     private const string ItemSelect = """
-        SELECT si.item_id, si.shared_by, si.shared_at,
+        SELECT si.item_id AS item_id, si.shared_by, si.shared_at AS shared_at,
                s.id, s.path, s.taken_at, s.width, s.height, s.sha256, s.kind, s.duration_ms,
                (SELECT COUNT(*) FROM comments c WHERE c.item_id = si.item_id),
                (SELECT MAX(c2.created_at) FROM comments c2 WHERE c2.item_id = si.item_id)
+                   AS latest_comment_at
         FROM share_items si JOIN shots s ON s.id = si.shot_id
         WHERE si.deleted_at IS NULL
         """;
@@ -331,6 +334,35 @@ public sealed class ShareStore : IDisposable
             cmd.CommandText = ItemSelect + " ORDER BY si.shared_at DESC, si.rowid DESC" +
                               (limit is null ? ";" : " LIMIT $n;");
             if (limit is not null) cmd.Parameters.AddWithValue("$n", limit);
+            return ReadItems(cmd);
+        }
+    }
+
+    /// <summary>The ?since= delta poll's query: live items whose share stamp
+    /// OR newest comment is strictly after <paramref name="sinceIso"/>, oldest
+    /// activity first, at most <paramref name="limit"/> rows (callers pass
+    /// n+1 to detect truncation). The filter, sort, and limit all run in SQL:
+    /// every stored stamp is this class's own CanonicalStamp (fixed-width UTC
+    /// round-trip, so lexical order IS chronological order), and the caller
+    /// re-canonicalizes the client's echoed cursor into the same shape. The
+    /// LINQ version this replaces materialized every live item per poll —
+    /// unbounded growth on the hottest query the protocol has.</summary>
+    public List<ShareItemRow> LiveItemsChangedSince(string sinceIso, int limit)
+    {
+        lock (_gate)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = $"""
+                SELECT * FROM ({ItemSelect})
+                WHERE shared_at > $since
+                   OR (latest_comment_at IS NOT NULL AND latest_comment_at > $since)
+                ORDER BY CASE
+                    WHEN latest_comment_at IS NOT NULL AND latest_comment_at > shared_at
+                    THEN latest_comment_at ELSE shared_at END, item_id
+                LIMIT $n;
+                """;
+            cmd.Parameters.AddWithValue("$since", sinceIso);
+            cmd.Parameters.AddWithValue("$n", limit);
             return ReadItems(cmd);
         }
     }
@@ -410,15 +442,22 @@ public sealed class ShareStore : IDisposable
         return new ShareItemRow(itemId, memberId, now, shot, 0, null);
     }
 
-    public List<(string ItemId, string DeletedAt)> Tombstones()
+    /// <summary>All tombstones, or — for the ?since= poll — only those deleted
+    /// strictly after <paramref name="deletedAfterIso"/> (CanonicalStamp form;
+    /// same lexical-order contract as LiveItemsChangedSince). Tombstone rows
+    /// are kept forever, so the poll path must filter in SQL rather than load
+    /// the whole ever-growing table per request.</summary>
+    public List<(string ItemId, string DeletedAt)> Tombstones(string? deletedAfterIso = null)
     {
         lock (_gate)
         {
             using var cmd = _db.CreateCommand();
             cmd.CommandText = """
                 SELECT item_id, deleted_at FROM share_items
-                WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC;
+                WHERE deleted_at IS NOT NULL AND ($after IS NULL OR deleted_at > $after)
+                ORDER BY deleted_at DESC;
                 """;
+            cmd.Parameters.AddWithValue("$after", (object?)deletedAfterIso ?? DBNull.Value);
             var list = new List<(string, string)>();
             using var r = cmd.ExecuteReader();
             while (r.Read()) list.Add((r.GetString(0), r.GetString(1)));
@@ -505,14 +544,25 @@ public sealed class ShareStore : IDisposable
     }
 
     /// <summary>Retention: tombstone everything shared more than
-    /// <paramref name="days"/> days ago. Returns the removed ids.</summary>
+    /// <paramref name="days"/> days ago. Returns the removed ids. The cutoff
+    /// compare runs in SQL (same CanonicalStamp lexical contract as the
+    /// ?since= queries) — the sweep is hourly, but it shouldn't materialize
+    /// the whole live set either.</summary>
     public List<string> SweepRetention(int days)
     {
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
-        var expired = LiveItems()
-            .Where(r => DateTimeOffset.TryParse(r.SharedAt, out var at) && at < cutoff)
-            .Select(r => r.ItemId)
-            .ToList();
+        var cutoff = CanonicalStamp(DateTimeOffset.UtcNow.AddDays(-days));
+        var expired = new List<string>();
+        lock (_gate)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = """
+                SELECT item_id FROM share_items
+                WHERE deleted_at IS NULL AND shared_at < $cutoff;
+                """;
+            cmd.Parameters.AddWithValue("$cutoff", cutoff);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) expired.Add(r.GetString(0));
+        }
 
         var removed = new List<string>();
         foreach (var id in expired)
@@ -615,8 +665,15 @@ public sealed class ShareStore : IDisposable
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
 
     /// <summary>Share timestamps are stamped UTC round-trip so every stored
-    /// value is directly comparable to every other.</summary>
-    private static string NowIso() => DateTimeOffset.UtcNow.ToString("o");
+    /// value is directly comparable to every other — including LEXICALLY:
+    /// the "o" format at a fixed +00:00 offset is fixed-width and ordered,
+    /// which is what lets the ?since= and retention queries compare in SQL.
+    /// Any incoming timestamp (a client's echoed cursor) must go through
+    /// CanonicalStamp before it may appear in one of those comparisons.</summary>
+    public static string CanonicalStamp(DateTimeOffset at)
+        => at.ToUniversalTime().ToString("o");
+
+    private static string NowIso() => CanonicalStamp(DateTimeOffset.UtcNow);
 
     /// <summary>Display names: control characters stripped (an embedded
     /// newline would let a joiner forge lines in esgee.log, the audit trail

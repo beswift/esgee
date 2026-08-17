@@ -322,95 +322,110 @@ final class ShotStore: @unchecked Sendable {
     /// pull-then-sync) lands exactly once. `takenAtRaw` is stored verbatim —
     /// the capturing machine minted it, and re-formatting would silently
     /// rewrite its UTC offset.
+    ///
+    /// Throws on a DB failure, exactly like the C# reference: the peer
+    /// server must NOT answer 200 for a row that never landed (the sender
+    /// would mark the shot pushed and never resend — permanent silent loss),
+    /// and the pull path must flash a failure, not "local id 0".
     func ingest(path: String, sha256: String, takenAtRaw: String,
                 width: Int, height: Int, kind: String, durationMs: Int64,
                 ocrText: String?, ocrEngineVersion: String, origin: String)
-        -> (shot: Shot, duplicate: Bool)
+        throws -> (shot: Shot, duplicate: Bool)
     {
-        queue.sync { () -> (shot: Shot, duplicate: Bool) in
-            do {
-                if let existing = try selectShots("""
-                    SELECT id, path, taken_at, width, height, sha256, kind, duration_ms, origin
-                    FROM shots WHERE sha256 = ? ORDER BY id DESC LIMIT 1;
-                    """, bind: { stmt in bindText(stmt, 1, sha256) }).first {
-                    return (existing, true)
-                }
-
-                // "No text yet" (nil) keeps an image pending; a video never
-                // enters the OCR queue at all.
-                let ocrDone = ocrText != nil || kind != "image"
-
-                try exec("BEGIN IMMEDIATE;")
-                var id: Int64 = 0
-                do {
-                    let ins = try prepare("""
-                        INSERT INTO shots (path, taken_at, width, height, sha256, kind,
-                                           duration_ms, ocr_text, ocr_done, ocr_engine_version, origin)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                        """)
-                    defer { sqlite3_finalize(ins) }
-                    bindText(ins, 1, path)
-                    bindText(ins, 2, takenAtRaw)
-                    _ = sqlite3_bind_int64(ins, 3, Int64(width))
-                    _ = sqlite3_bind_int64(ins, 4, Int64(height))
-                    bindText(ins, 5, sha256)
-                    bindText(ins, 6, kind)
-                    _ = sqlite3_bind_int64(ins, 7, durationMs)
-                    if let ocrText {
-                        bindText(ins, 8, ocrText)
-                    } else {
-                        _ = sqlite3_bind_null(ins, 8)
-                    }
-                    _ = sqlite3_bind_int64(ins, 9, ocrDone ? 1 : 0)
-                    bindText(ins, 10, ocrEngineVersion)
-                    bindText(ins, 11, origin)
-                    try stepDone(ins)
-                    id = sqlite3_last_insert_rowid(db)
-
-                    if let ocrText, !ocrText.isEmpty {
-                        let fts = try prepare("INSERT INTO shots_fts(rowid, ocr_text) VALUES (?, ?);")
-                        defer { sqlite3_finalize(fts) }
-                        _ = sqlite3_bind_int64(fts, 1, id)
-                        bindText(fts, 2, ocrText)
-                        try stepDone(fts)
-                    }
-
-                    try exec("COMMIT;")
-                } catch {
-                    tryExec("ROLLBACK;")
-                    throw error
-                }
-
-                return (Shot(id: id, path: path,
-                             takenAt: parsedOrEpoch(takenAtRaw, id: id),
-                             takenAtRaw: takenAtRaw,
-                             width: width, height: height, sha256: sha256,
-                             kind: kind, durationMs: durationMs, origin: origin), false)
-            } catch {
-                // The signature is non-throwing by contract; nothing durable
-                // was written, so hand back an id-0 shot and let the caller's
-                // response still be well-formed.
-                Log.error("ingest failed for \(path): \(error)")
-                return (Shot(id: 0, path: path,
-                             takenAt: parsedOrEpoch(takenAtRaw, id: 0),
-                             takenAtRaw: takenAtRaw,
-                             width: width, height: height, sha256: sha256,
-                             kind: kind, durationMs: durationMs, origin: origin), false)
+        try queue.sync { () throws -> (shot: Shot, duplicate: Bool) in
+            if let existing = try selectShots("""
+                SELECT id, path, taken_at, width, height, sha256, kind, duration_ms, origin
+                FROM shots WHERE sha256 = ? ORDER BY id DESC LIMIT 1;
+                """, bind: { stmt in bindText(stmt, 1, sha256) }).first {
+                return (existing, true)
             }
+
+            // "No text yet" (nil) keeps an image pending; a video never
+            // enters the OCR queue at all.
+            let ocrDone = ocrText != nil || kind != "image"
+
+            try exec("BEGIN IMMEDIATE;")
+            var id: Int64 = 0
+            do {
+                let ins = try prepare("""
+                    INSERT INTO shots (path, taken_at, width, height, sha256, kind,
+                                       duration_ms, ocr_text, ocr_done, ocr_engine_version, origin)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    """)
+                defer { sqlite3_finalize(ins) }
+                bindText(ins, 1, path)
+                bindText(ins, 2, takenAtRaw)
+                _ = sqlite3_bind_int64(ins, 3, Int64(width))
+                _ = sqlite3_bind_int64(ins, 4, Int64(height))
+                bindText(ins, 5, sha256)
+                bindText(ins, 6, kind)
+                _ = sqlite3_bind_int64(ins, 7, durationMs)
+                if let ocrText {
+                    bindText(ins, 8, ocrText)
+                } else {
+                    _ = sqlite3_bind_null(ins, 8)
+                }
+                _ = sqlite3_bind_int64(ins, 9, ocrDone ? 1 : 0)
+                bindText(ins, 10, ocrEngineVersion)
+                bindText(ins, 11, origin)
+                try stepDone(ins)
+                id = sqlite3_last_insert_rowid(db)
+
+                if let ocrText, !ocrText.isEmpty {
+                    let fts = try prepare("INSERT INTO shots_fts(rowid, ocr_text) VALUES (?, ?);")
+                    defer { sqlite3_finalize(fts) }
+                    _ = sqlite3_bind_int64(fts, 1, id)
+                    bindText(fts, 2, ocrText)
+                    try stepDone(fts)
+                }
+
+                try exec("COMMIT;")
+            } catch {
+                tryExec("ROLLBACK;")
+                throw error
+            }
+
+            return (Shot(id: id, path: path,
+                         takenAt: parsedOrEpoch(takenAtRaw, id: id),
+                         takenAtRaw: takenAtRaw,
+                         width: width, height: height, sha256: sha256,
+                         kind: kind, durationMs: durationMs, origin: origin), false)
         }
+    }
+
+    /// Ingest destinations take their extension from a client-supplied file
+    /// name. Anything but a short alphanumeric extension — quotes, control
+    /// characters, a hundred-char "extension" — would make the file write
+    /// throw after the route can no longer answer 400, dropping the
+    /// connection with no response. Those fall back to the kind's default
+    /// instead (docs/PROTOCOL.md; byte-identical to the C# SafeExtension).
+    static func safeExtension(_ ext: String?, kind: String) -> String {
+        let fallback = kind == "video" ? ".mp4" : ".png"
+        guard let ext, ext.count >= 2, ext.count <= 10, ext.hasPrefix(".") else {
+            return fallback
+        }
+        for ch in ext.dropFirst() {
+            guard ch.isASCII, ch.isLetter || ch.isNumber else { return fallback }
+        }
+        return ext
     }
 
     /// Picks a destination path inside this archive's yyyy/MM tree for an
     /// incoming file, creating the month folder. Caller writes the bytes.
-    /// `ext` includes the dot.
-    func planIngestPath(takenAt: Date, ext: String) -> String {
-        let dir = root.appendingPathComponent(IsoStamp.yearFolder(takenAt))
-                      .appendingPathComponent(IsoStamp.monthFolder(takenAt))
+    /// `ext` includes the dot. `timeZone` is the SENDER's embedded offset
+    /// (IsoStamp.embeddedTimeZone) so the tree files by the capturing
+    /// machine's wall clock — the C# reference formats the DateTimeOffset it
+    /// parsed from taken_at, and both trees must name the same artifact
+    /// identically (docs/MAC.md "Store").
+    func planIngestPath(takenAt: Date, timeZone: TimeZone = .current, ext: String) -> String {
+        let dir = root.appendingPathComponent(IsoStamp.yearFolder(takenAt, in: timeZone))
+                      .appendingPathComponent(IsoStamp.monthFolder(takenAt, in: timeZone))
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // The uniqueness probe runs under the gate so two concurrent ingests
         // cannot be handed the same path.
         return queue.sync {
-            Self.uniquePath(dir.appendingPathComponent(IsoStamp.fileStem(takenAt) + ext).path)
+            Self.uniquePath(dir.appendingPathComponent(
+                IsoStamp.fileStem(takenAt, in: timeZone) + ext).path)
         }
     }
 

@@ -12,15 +12,20 @@ import Vision
 /// cannot wedge the queue.
 final class OcrIndexer: @unchecked Sendable {
 
-    /// "vision/<max supported VNRecognizeTextRequest revision>+<os build>",
-    /// e.g. "vision/3+23F79". Recorded per shot and carried in sync sidecars,
+    /// The revision recognition actually runs at. Pinned explicitly on every
+    /// request: an unset VNRequest defaults to the revision of the SDK the
+    /// binary was LINKED against, not the newest the running OS supports, so
+    /// without the pin engineVersion could claim a revision the text was
+    /// never produced with — and a future selective re-OCR would skip
+    /// exactly the rows that need re-running.
+    static let engineRevision: Int = VNRecognizeTextRequest.supportedRevisions.max() ?? 3
+
+    /// "vision/<revision recognition runs at>+<os build>", e.g.
+    /// "vision/3+23F79". Recorded per shot and carried in sync sidecars,
     /// so a future better engine can re-OCR only the rows an older engine
     /// produced. Vision doesn't version itself; the request revision plus the
     /// OS build is the honest proxy — same convention as winocr/10.0.26200.0.
-    static let engineVersion: String = {
-        let revision = VNRecognizeTextRequest.supportedRevisions.max() ?? 3
-        return "vision/\(revision)+\(osBuild())"
-    }()
+    static let engineVersion: String = "vision/\(engineRevision)+\(osBuild())"
 
     /// Vision ships with the OS — there is no missing-language-pack failure
     /// mode here. Kept so callers read identically to the Windows build.
@@ -102,6 +107,9 @@ final class OcrIndexer: @unchecked Sendable {
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
 
         let request = VNRecognizeTextRequest()
+        // The same revision engineVersion advertises — the sidecar must
+        // describe the engine that actually produced the text.
+        request.revision = Self.engineRevision
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
 

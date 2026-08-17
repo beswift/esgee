@@ -33,12 +33,19 @@ public sealed class SharePusher
             .ToList();
 
     /// <summary>
-    /// Pushes one capture to one share. Waits for OCR exactly as SyncQueue
-    /// does (up to 30s, then sends without text rather than never — the node
-    /// has no OCR engine to fill a hole, docs/SHARES.md) so the item arrives
-    /// searchable. Never touches the capture pipeline; callers run it on a
-    /// worker and own reporting. Duplicate=true on the result is a success —
-    /// the sha256 was already shared and the existing item came back.
+    /// Pushes one capture to one share. Images MUST arrive with their OCR
+    /// sidecar: a share node runs no OCR engine and no client ever backfills
+    /// (docs/SHARES.md "The node is a Linux binary"), so an image pushed with
+    /// ocr_text null would stay invisible to /share/search forever. The rule
+    /// here enforces that: wait briefly for the local queue (it is normally
+    /// seconds deep), then REFUSE — throw, so the affordance that started the
+    /// push reports it — rather than mint a permanently unsearchable item.
+    /// The one deliberate exception is OCR disabled in settings: no text will
+    /// ever exist, so the capture ships textless immediately and SHARES.md
+    /// documents that trade-off. Never touches the capture pipeline; callers
+    /// run it on a worker and own reporting. Duplicate=true on the result is
+    /// a success — the sha256 was already shared and the existing item came
+    /// back.
     /// </summary>
     public async Task<ShareItemDto> PushAsync(Shot shot, ShareEntry share,
         CancellationToken ct = default)
@@ -47,12 +54,20 @@ public sealed class SharePusher
         var engine = "";
         if (shot.Kind == "image")
         {
-            for (var waited = 0; waited < 30_000; waited += 1000)
+            var (done, text, ver) = _store.GetOcr(shot.Id);
+            if (!done && _settings.OcrEnabled)
             {
-                var (done, text, ver) = _store.GetOcr(shot.Id);
-                if (done) { ocrText = text ?? ""; engine = ver; break; }
-                await Task.Delay(1000, ct);
+                for (var waited = 0; !done && waited < 30_000; waited += 1000)
+                {
+                    await Task.Delay(1000, ct);
+                    (done, text, ver) = _store.GetOcr(shot.Id);
+                }
+                if (!done)
+                    throw new InvalidOperationException(
+                        "OCR hasn't finished for this capture — a share can never fill that " +
+                        "hole itself, so the item would stay unsearchable; try again shortly");
             }
+            if (done) { ocrText = text ?? ""; engine = ver; }
         }
 
         // Note what the meta CANNOT carry: origin, machine name, local id —

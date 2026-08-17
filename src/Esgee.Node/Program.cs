@@ -80,7 +80,7 @@ internal static class Program
 
     private static int Serve(List<string> args, Settings settings, bool explicitRoot)
     {
-        var port = int.TryParse(TakeOption(args, "port"), out var p) ? p : settings.PeerPort;
+        var portRaw = TakeOption(args, "port");
         var token = TakeOption(args, "token") ?? settings.PeerToken;
         var bind = TakeOption(args, "bind");
 
@@ -93,6 +93,12 @@ internal static class Program
         if (RejectLeftovers(args, "serve") is { } leftoverError)
         {
             Console.Error.WriteLine(leftoverError);
+            return 2;
+        }
+
+        if (!TryParsePort(portRaw, settings.PeerPort, out var port))
+        {
+            Console.Error.WriteLine(PortError(portRaw!));
             return 2;
         }
 
@@ -128,7 +134,7 @@ internal static class Program
 
     private static int ServeShare(List<string> args, Settings settings, bool explicitRoot)
     {
-        var port = int.TryParse(TakeOption(args, "port"), out var p) ? p : ShareDefaultPort;
+        var portRaw = TakeOption(args, "port");
         var name = TakeOption(args, "share-name");
         var bind = TakeOption(args, "bind");
         var retentionRaw = TakeOption(args, "retention");
@@ -143,6 +149,12 @@ internal static class Program
         if (RejectLeftovers(args, "serve-share") is { } leftoverError)
         {
             Console.Error.WriteLine(leftoverError);
+            return 2;
+        }
+
+        if (!TryParsePort(portRaw, ShareDefaultPort, out var port))
+        {
+            Console.Error.WriteLine(PortError(portRaw!));
             return 2;
         }
 
@@ -198,11 +210,17 @@ internal static class Program
     private static int ShareInvite(List<string> args, Settings settings, bool explicitRoot)
     {
         var hint = TakeOption(args, "hint");
-        var port = int.TryParse(TakeOption(args, "port"), out var p) ? p : ShareDefaultPort;
+        var portRaw = TakeOption(args, "port");
 
         if (RejectLeftovers(args, "share-invite") is { } leftoverError)
         {
             Console.Error.WriteLine(leftoverError);
+            return 2;
+        }
+
+        if (!TryParsePort(portRaw, ShareDefaultPort, out var port))
+        {
+            Console.Error.WriteLine(PortError(portRaw!));
             return 2;
         }
 
@@ -226,6 +244,22 @@ internal static class Program
             "; rewrite the host if members reach this node at a different address");
         return 0;
     }
+
+    /// <summary>A missing --port means the verb's default; a MALFORMED one is a
+    /// hard error at the call site, never the default. TakeOption has already
+    /// consumed the flag and its value by parse time, so a typo'd port would
+    /// otherwise sail past RejectLeftovers — the guard whose stated purpose is
+    /// that a typo must never silently change which archive or port a node
+    /// serves — and the unit would come up green on the wrong endpoint
+    /// (--retention already fails loud the same way).</summary>
+    private static bool TryParsePort(string? raw, int fallback, out int port)
+    {
+        port = fallback;
+        return raw is null || (int.TryParse(raw, out port) && port is >= 1 and <= 65535);
+    }
+
+    private static string PortError(string raw)
+        => $"esgee-node: bad --port '{raw}' (want a TCP port, 1-65535)";
 
     /// <summary>--token-file wins over --token when both are given — the
     /// systemd-friendly way to keep the secret out of `ps` and unit files.

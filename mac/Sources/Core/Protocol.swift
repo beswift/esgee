@@ -38,11 +38,15 @@ enum PeerCapability {
     /// Archive may contain kind "video" items with GIF siblings.
     static let record = "record"
 
-    /// What this build advertises on /ping. No recorder ships in Mac v1, so
-    /// no "record" — synced-in recordings are still served item-by-item (the
-    /// has_gif flag travels per shot), the capability is about what this
-    /// endpoint produces.
-    static let advertised: [String] = [peer]
+    /// What this build advertises on /ping. `record` is defined by ARCHIVE
+    /// CONTENTS, not by what this endpoint produces (docs/PROTOCOL.md:
+    /// "Archive may contain kind 'video' items with GIF siblings") — no
+    /// recorder ships in Mac v1, but pushed/pulled recordings land here as
+    /// first-class video items served with their GIF/thumb siblings, so a
+    /// client written to the doc's table must wire its video affordances.
+    /// Same static answer as the Windows build, which advertises
+    /// ["peer", "record"] before any recording exists.
+    static let advertised: [String] = [peer, record]
 }
 
 /// GET /ping — the handshake and health number.

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using DrawingRect = System.Drawing.Rectangle;
@@ -67,9 +68,14 @@ public sealed class RecordController : IDisposable
         }
 
         var takenAt = DateTimeOffset.Now;
-        var dir = Path.Combine(_archiveRoot, takenAt.ToString("yyyy"), takenAt.ToString("MM"));
+        // Invariant culture, same rule as ShotStore: the yyyy/MM tree and the
+        // stamp names must not follow the current locale's calendar.
+        var dir = Path.Combine(_archiveRoot,
+            takenAt.ToString("yyyy", CultureInfo.InvariantCulture),
+            takenAt.ToString("MM", CultureInfo.InvariantCulture));
         Directory.CreateDirectory(dir);
-        var mp4 = Unique(Path.Combine(dir, $"{takenAt:yyyy-MM-dd_HH-mm-ss}.mp4"));
+        var mp4 = Unique(Path.Combine(dir,
+            takenAt.ToString("yyyy-MM-dd_HH-mm-ss", CultureInfo.InvariantCulture) + ".mp4"));
 
         try
         {
