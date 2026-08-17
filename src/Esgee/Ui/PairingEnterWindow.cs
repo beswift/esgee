@@ -171,7 +171,7 @@ public sealed class PairingEnterWindow : Window
             if (attempt is { Outcome: PeerClient.PairOutcome.Paired, Result: { } paired })
             {
                 Log.Info($"peers: paired with '{paired.Machine}' at " +
-                         $"{attempt.Peer.Host}:{attempt.Peer.Port} — token adopted");
+                         $"{attempt.Peer.BaseUrl} — token adopted");
                 _onPaired(paired);
                 _status.Text = $"Paired with {paired.Machine} — peers are on.";
                 var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };

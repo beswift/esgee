@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -6,10 +7,13 @@ using Esgee.Store;
 
 namespace Esgee.Peers;
 
-/// <summary>A peer we can talk to: display name + where its API lives.</summary>
-public sealed record PeerInfo(string Name, string Host, int Port)
+/// <summary>A peer we can talk to: display name + the base URL its API lives
+/// at (e.g. http://100.72.104.102:43117). The URL is opaque past construction
+/// — routes are appended to it, never rebuilt from host/port parts, so a
+/// future https endpoint with a path differs only in this string
+/// (docs/PROTOCOL.md "Addressing").</summary>
+public sealed record PeerInfo(string Name, string BaseUrl)
 {
-    public string BaseUrl => $"http://{Host}:{Port}";
     public override string ToString() => Name;
 }
 
@@ -33,7 +37,9 @@ public sealed class PeerClient : IDisposable
         Peer = peer;
         _http = new HttpClient
         {
-            BaseAddress = new Uri(peer.BaseUrl),
+            // Trailing slash + relative route paths = true concatenation, so a
+            // base URL that carries a path (a hosted relay) keeps working.
+            BaseAddress = new Uri(peer.BaseUrl.TrimEnd('/') + "/"),
             Timeout = TimeSpan.FromMinutes(5), // big MP4 pulls over a relay link
         };
         _http.DefaultRequestHeaders.Add(PeerProtocol.TokenHeader, token);
@@ -48,13 +54,13 @@ public sealed class PeerClient : IDisposable
     public async Task<PingDto?> PingAsync(TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
-        return await _http.GetFromJsonAsync<PingDto>("/ping", PeerProtocol.Json, cts.Token);
+        return await _http.GetFromJsonAsync<PingDto>("ping", PeerProtocol.Json, cts.Token);
     }
 
     public async Task<List<ShotDto>> RecentAsync(int n)
     {
         var list = await _http.GetFromJsonAsync<List<ShotDto>>(
-            $"/recent?n={n}", PeerProtocol.Json) ?? [];
+            $"recent?n={n}", PeerProtocol.Json) ?? [];
         Log.Info($"peer {Peer.Name}: /recent n={n} -> {list.Count} items");
         return list;
     }
@@ -62,16 +68,16 @@ public sealed class PeerClient : IDisposable
     public async Task<List<ShotDto>> SearchAsync(string query)
     {
         var list = await _http.GetFromJsonAsync<List<ShotDto>>(
-            $"/search?q={Uri.EscapeDataString(query)}", PeerProtocol.Json) ?? [];
+            $"search?q={Uri.EscapeDataString(query)}", PeerProtocol.Json) ?? [];
         Log.Info($"peer {Peer.Name}: /search \"{query}\" -> {list.Count} items");
         return list;
     }
 
     public Task<ShotDto?> MetaAsync(long id)
-        => _http.GetFromJsonAsync<ShotDto?>($"/meta/{id}", PeerProtocol.Json);
+        => _http.GetFromJsonAsync<ShotDto?>($"meta/{id}", PeerProtocol.Json);
 
     public Task<byte[]> ThumbAsync(long id)
-        => _http.GetByteArrayAsync($"/thumb/{id}");
+        => _http.GetByteArrayAsync($"thumb/{id}");
 
     // ---- local materialization ----------------------------------------------
 
@@ -95,12 +101,12 @@ public sealed class PeerClient : IDisposable
         {
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
 
-            await DownloadAsync($"/file/{shot.Id}", dest);
+            await DownloadAsync($"file/{shot.Id}", dest);
             if (shot.Kind == "video")
             {
                 if (shot.HasGif)
-                    await DownloadAsync($"/file/{shot.Id}?alt=gif", Path.ChangeExtension(dest, ".gif"));
-                await DownloadAsync($"/file/{shot.Id}?alt=thumb", dest + ".png", optional: true);
+                    await DownloadAsync($"file/{shot.Id}?alt=gif", Path.ChangeExtension(dest, ".gif"));
+                await DownloadAsync($"file/{shot.Id}?alt=thumb", dest + ".png", optional: true);
             }
 
             Log.Info($"peer {Peer.Name}: cached shot {shot.Id} -> {dest} " +
@@ -154,7 +160,7 @@ public sealed class PeerClient : IDisposable
             form.Add(new ByteArrayContent(await File.ReadAllBytesAsync(thumbPath)),
                 "thumb", Path.GetFileName(thumbPath));
 
-        using var response = await _http.PostAsync("/ingest", form);
+        using var response = await _http.PostAsync("ingest", form);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<IngestResult>(PeerProtocol.Json)
                ?? throw new HttpRequestException("empty ingest response");
@@ -175,9 +181,11 @@ public sealed class PeerClient : IDisposable
         var probes = CandidatePeers(settings)
             .Select(async info =>
             {
-                using var client = new PeerClient(info, settings.PeerToken);
                 try
                 {
+                    // Construction inside the try: one malformed entry must not
+                    // fault the batch and hide every healthy peer.
+                    using var client = new PeerClient(info, settings.PeerToken);
                     var ping = await client.PingAsync(TimeSpan.FromSeconds(2));
                     return ping is { App: "esgee" } ? (info, ping) : ((PeerInfo, PingDto)?)null;
                 }
@@ -202,7 +210,7 @@ public sealed class PeerClient : IDisposable
         var candidates = new List<PeerInfo>();
 
         foreach (var node in Tailscale.Nodes().Where(n => n.Online))
-            candidates.Add(new PeerInfo(node.HostName, node.Ip, settings.PeerPort));
+            candidates.Add(new PeerInfo(node.HostName, $"http://{node.Ip}:{settings.PeerPort}"));
 
         foreach (var entry in settings.Peers)
         {
@@ -211,17 +219,72 @@ public sealed class PeerClient : IDisposable
             var eq = entry.IndexOf('=');
             if (eq > 0) { name = entry[..eq]; addr = entry[(eq + 1)..]; }
 
-            var port = settings.PeerPort;
+            if (ToBaseUrl(addr, settings.PeerPort) is { } url)
+                candidates.Add(new PeerInfo(name, url));
+            else
+                Log.Warn($"peers: ignoring malformed Peers entry '{entry}'");
+        }
+
+        return candidates.DistinctBy(c => c.BaseUrl).ToList();
+    }
+
+    /// <summary>Manual-entry address → base URL, or null when the entry can't
+    /// name an endpoint (truncated paste, non-numeric port). Full http(s) URLs
+    /// pass through (an endpoint may carry a path); bare "host" and
+    /// "host:port" expand to the same http://host:port they always have.
+    /// Validated here so one bad settings entry is dropped at the edge instead
+    /// of throwing later inside a batch of healthy peers.</summary>
+    public static string? ToBaseUrl(string addr, int defaultPort)
+    {
+        addr = addr.Trim();
+        if (!addr.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !addr.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            var port = defaultPort;
             var colon = addr.LastIndexOf(':');
             if (colon > 0 && int.TryParse(addr[(colon + 1)..], out var p))
             {
                 port = p;
                 addr = addr[..colon];
             }
-            candidates.Add(new PeerInfo(name, addr, port));
+            addr = $"http://{addr}:{port}";
         }
 
-        return candidates.DistinctBy(c => $"{c.Host}:{c.Port}").ToList();
+        addr = addr.TrimEnd('/');
+        return Uri.TryCreate(addr + "/", UriKind.Absolute, out _) ? addr : null;
+    }
+
+    /// <summary>Sync-target / --check-peer address → base URL. Accepts
+    /// everything ToBaseUrl does plus bare tailnet machine names, which
+    /// resolve through `tailscale status`. Null when the entry is malformed
+    /// or the name isn't on the tailnet right now. Can shell out — keep off
+    /// the UI thread.</summary>
+    public static string? ResolveTargetUrl(string target, int defaultPort)
+    {
+        target = target.Trim();
+        if (!target.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !target.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            var host = target;
+            var port = defaultPort;
+            var colon = target.LastIndexOf(':');
+            if (colon > 0 && int.TryParse(target[(colon + 1)..], out var p))
+            {
+                host = target[..colon];
+                port = p;
+            }
+
+            if (!IPAddress.TryParse(host, out _))
+            {
+                var node = Tailscale.Nodes().FirstOrDefault(n =>
+                    n.HostName.Equals(host, StringComparison.OrdinalIgnoreCase));
+                if (node is null) return null;
+                host = node.Ip;
+            }
+            target = $"{host}:{port}";
+        }
+
+        return ToBaseUrl(target, defaultPort);
     }
 
     // ---- pairing ------------------------------------------------------------
@@ -245,7 +308,7 @@ public sealed class PeerClient : IDisposable
             var body = new StringContent(
                 JsonSerializer.Serialize(new PairRequest(pin, Environment.MachineName), PeerProtocol.Json),
                 System.Text.Encoding.UTF8, "application/json");
-            using var resp = await http.PostAsync($"{peer.BaseUrl}/pair", body);
+            using var resp = await http.PostAsync($"{peer.BaseUrl.TrimEnd('/')}/pair", body);
 
             if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {

@@ -81,13 +81,15 @@ public sealed class Settings
     /// settings.json on every machine that should talk to this one.</summary>
     public string PeerToken { get; set; } = "";
 
-    /// <summary>Manual peer list, as "name=host:port" or "host:port" entries —
-    /// a fallback for when tailscale-status discovery can't see a machine.</summary>
+    /// <summary>Manual peer list, as "name=host:port", "host:port", or a full
+    /// URL ("name=http://…" / "https://…") — a fallback for when
+    /// tailscale-status discovery can't see a machine.</summary>
     public string[] Peers { get; set; } = [];
 
-    /// <summary>When set (a tailnet machine name or "host:port"), every new
-    /// capture/recording is pushed to that peer in the background. Requires
-    /// PeerToken to match on both ends. Empty = no push sync.</summary>
+    /// <summary>When set (a tailnet machine name, "host:port", or a full
+    /// http(s) URL), every new capture/recording is pushed to that peer in
+    /// the background. Requires PeerToken to match on both ends.
+    /// Empty = no push sync.</summary>
     public string SyncTargetPeer { get; set; } = "";
 
     [JsonIgnore]

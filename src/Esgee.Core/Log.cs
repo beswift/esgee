@@ -3,7 +3,7 @@ using System.IO;
 namespace Esgee;
 
 /// <summary>Deliberately tiny. A tray app with no window needs a paper trail.</summary>
-internal static class Log
+public static class Log
 {
     private static readonly string Path = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

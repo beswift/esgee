@@ -76,11 +76,15 @@ public sealed class SyncQueue : IAsyncDisposable
         }
     }
 
-    /// <summary>"machine" from "machine" or "host:port" — used to skip pushing
-    /// a capture back to the machine it came from.</summary>
+    /// <summary>"machine" from "machine", "host:port", or a full URL (the
+    /// URL's host) — used to skip pushing a capture back to the machine it
+    /// came from.</summary>
     private string TargetMachineName()
     {
         var t = Target;
+        if (Uri.TryCreate(t, UriKind.Absolute, out var uri) &&
+            uri.Scheme is "http" or "https")
+            return uri.Host;
         var colon = t.LastIndexOf(':');
         return colon > 0 ? t[..colon] : t;
     }
@@ -139,32 +143,13 @@ public sealed class SyncQueue : IAsyncDisposable
         }
     }
 
-    /// <summary>Resolve the target (tailnet machine name, or host[:port]) and
-    /// build a client. Null when the name isn't on the tailnet right now.</summary>
+    /// <summary>Resolve the target (tailnet machine name, host[:port], or a
+    /// full URL — docs/PROTOCOL.md "Addressing") and build a client. Null when
+    /// the name isn't on the tailnet right now or the entry is malformed.</summary>
     private PeerClient? Connect()
-    {
-        var t = Target;
-        string host;
-        var port = _settings.PeerPort;
-
-        var colon = t.LastIndexOf(':');
-        if (colon > 0 && int.TryParse(t[(colon + 1)..], out var p))
-        {
-            host = t[..colon];
-            port = p;
-        }
-        else host = t;
-
-        if (!System.Net.IPAddress.TryParse(host, out _))
-        {
-            var node = Tailscale.Nodes().FirstOrDefault(n =>
-                n.HostName.Equals(host, StringComparison.OrdinalIgnoreCase));
-            if (node is null) return null;
-            host = node.Ip;
-        }
-
-        return new PeerClient(new PeerInfo(TargetMachineName(), host, port), _settings.PeerToken);
-    }
+        => PeerClient.ResolveTargetUrl(Target, _settings.PeerPort) is { } baseUrl
+            ? new PeerClient(new PeerInfo(TargetMachineName(), baseUrl), _settings.PeerToken)
+            : null;
 
     /// <summary>True = delivered (or permanently skippable). Throws on
     /// transient failure so the caller's backoff loop retries.</summary>

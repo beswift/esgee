@@ -28,6 +28,18 @@ jobs:
       - name: Publish (self-contained win-x64)
         run: dotnet publish src/Esgee/Esgee.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.v.outputs.version }} -o publish
 
+      # The share node deploys to Linux hosts (docs/SHARES.md). Publishing it
+      # here — and only here — is what keeps the deployed binary tag-stamped
+      # and reproducible instead of a working-tree build reporting 0.0.0.
+      # Single-file, but libe_sqlite3.so must still ship beside the apphost,
+      # so the whole publish directory is the artifact.
+      - name: Publish node (self-contained linux-x64)
+        run: dotnet publish src/Esgee.Node/Esgee.Node.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:Version=${{ steps.v.outputs.version }} -o publish-node
+
+      - name: Archive node
+        shell: bash
+        run: tar -czf esgee-node-linux-x64.tar.gz -C publish-node .
+
       - name: Install vpk
         run: dotnet tool install -g vpk
 
@@ -42,3 +54,10 @@ jobs:
 
       - name: Upload to GitHub Release
         run: vpk upload github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --publish --releaseName "esgee v${{ steps.v.outputs.version }}" --tag ${{ github.ref_name }}
+
+      # After vpk has created the release, attach the node tarball to it.
+      - name: Attach node to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload ${{ github.ref_name }} esgee-node-linux-x64.tar.gz --clobber

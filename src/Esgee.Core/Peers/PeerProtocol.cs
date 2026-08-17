@@ -10,7 +10,9 @@ namespace Esgee.Peers;
 /// </summary>
 public static class PeerProtocol
 {
-    public const int Version = 1;
+    // Proto 2 = base-URL addressing + the capabilities array on /ping. The
+    // routes themselves are unchanged, so proto-1 peers stay fully readable.
+    public const int Version = 2;
 
     /// <summary>Requests authenticate with this header carrying PeerToken.</summary>
     public const string TokenHeader = "X-Esgee-Token";
@@ -22,8 +24,16 @@ public static class PeerProtocol
     };
 }
 
+/// <summary>GET /ping response. Capabilities gate features, not Proto: a
+/// proto-1 peer omits the field entirely and must be read as ["peer"], never
+/// rejected — discovery accepts any {app:"esgee"} answer.</summary>
 public sealed record PingDto(
-    string App, string Version, int Proto, string Machine, long Captures);
+    string App, string Version, int Proto, string Machine, long Captures,
+    string[]? Capabilities = null)
+{
+    [JsonIgnore]
+    public string[] EffectiveCapabilities => Capabilities ?? ["peer"];
+}
 
 /// <summary>One capture, as listed by /recent, /search, and /meta. Lists omit
 /// OcrText; /meta/{id} includes it (that plus the engine version IS the sync

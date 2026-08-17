@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- The headless peer node (docs/SHARES.md "The node is a Linux binary"):
+         same protocol, same store, no desktop anywhere in its closure.
+         The linux-x64 publish recipe lives in .github/workflows/release.yml
+         (tag-stamped, single-file + libe_sqlite3.so beside it); runs on
+         Windows too for local testing. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>esgee-node</AssemblyName>
+    <RootNamespace>Esgee.Node</RootNamespace>
+    <!-- CI overrides this from the git tag (dotnet publish -p:Version=x.y.z);
+         local builds report 0.0.0 so a dev copy is never mistaken for a release. -->
+    <Version Condition="'$(Version)' == ''">0.0.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Esgee.Core\Esgee.Core.csproj" />
+    <!-- The node's side of the IThumbEncoder seam — WPF's BitmapImage does
+         this job in the app. -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+  </ItemGroup>
+
+</Project>

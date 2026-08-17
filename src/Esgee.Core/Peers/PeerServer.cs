@@ -4,7 +4,6 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Windows.Media.Imaging;
 using Esgee.Store;
 
 namespace Esgee.Peers;
@@ -27,21 +26,30 @@ public sealed class PeerServer : IDisposable
 {
     private readonly TcpListener _listener;
     private readonly ShotStore _store;
+    private readonly IThumbEncoder _thumbs;
     private readonly byte[] _token;
     private readonly string _tokenString;
     private readonly CancellationTokenSource _cts = new();
 
+    // What this implementation serves (docs/PROTOCOL.md "Capability
+    // negotiation"): the peer routes, over an archive that may hold
+    // recordings. No share or annotate routes here yet.
+    private static readonly string[] Capabilities = ["peer", "record"];
+
     // Non-null only while a pairing window is open — the sole time POST /pair
-    // answers anything but 404. Volatile: set on the UI thread, read on
-    // connection worker threads.
+    // is routed at all (closed, it falls through the token gate like any
+    // unknown route). Volatile: set on the UI thread, read on connection
+    // worker threads.
     private volatile PairingSession? _pairing;
 
     public string BoundAddress { get; }
 
-    private PeerServer(TcpListener listener, ShotStore store, string token, string bound)
+    private PeerServer(TcpListener listener, ShotStore store, string token, string bound,
+        IThumbEncoder thumbs)
     {
         _listener = listener;
         _store = store;
+        _thumbs = thumbs;
         _token = Encoding.UTF8.GetBytes(token);
         _tokenString = token;
         BoundAddress = bound;
@@ -67,10 +75,13 @@ public sealed class PeerServer : IDisposable
         }
     }
 
-    /// <summary>Starts the server on the machine's Tailscale IPv4. Returns null
-    /// (and logs why) when tailscale is unavailable or the port is taken —
-    /// never falls back to a wider bind.</summary>
-    public static PeerServer? TryStart(ShotStore store, string token, int port)
+    /// <summary>Starts the server on the machine's Tailscale IPv4 (or, for the
+    /// headless node's --bind, an explicit interface address — loopback is fine
+    /// for local testing, the unspecified address never is). Returns null (and
+    /// logs why) when tailscale is unavailable or the port is taken — never
+    /// falls back to a wider bind.</summary>
+    public static PeerServer? TryStart(ShotStore store, string token, int port,
+        IThumbEncoder thumbs, string? bindIp = null)
     {
         if (string.IsNullOrWhiteSpace(token))
         {
@@ -78,11 +89,38 @@ public sealed class PeerServer : IDisposable
             return null;
         }
 
-        var ip = Tailscale.SelfIPv4();
-        if (ip is null)
+        string? ip;
+        if (bindIp is not null)
         {
-            Log.Warn("peers: no Tailscale IPv4 found (is tailscale running?); server not started");
-            return null;
+            // "Reachability = tailnet membership" only holds on a specific
+            // interface — a wildcard bind would open the API to every network
+            // the machine touches, so it is refused rather than narrowed.
+            if (!IPAddress.TryParse(bindIp, out var parsed) ||
+                parsed.Equals(IPAddress.Any) || parsed.Equals(IPAddress.IPv6Any))
+            {
+                Log.Error($"peers: refusing to bind '{bindIp}' — a specific interface address is required, never 0.0.0.0");
+                return null;
+            }
+            ip = parsed.ToString();
+
+            // Loopback (local testing) and CGNAT 100.64/10 (a Tailscale
+            // address) are the sanctioned binds. Anything else serves the
+            // archive as plaintext HTTP off-tailnet — WireGuard is no longer
+            // doing the encryption the security model assumes, so say so
+            // loudly instead of starting in silence.
+            if (!IPAddress.IsLoopback(parsed) && !IsTailnetAddress(parsed))
+                Log.Warn($"peers: --bind {ip} is neither loopback nor a Tailscale (100.64/10) address — " +
+                         "the archive will be served as PLAINTEXT HTTP outside the tailnet, " +
+                         "guarded by the token alone (docs/PROTOCOL.md forbids this endpoint class)");
+        }
+        else
+        {
+            ip = Tailscale.SelfIPv4();
+            if (ip is null)
+            {
+                Log.Warn("peers: no Tailscale IPv4 found (is tailscale running?); server not started");
+                return null;
+            }
         }
 
         try
@@ -90,14 +128,25 @@ public sealed class PeerServer : IDisposable
             var listener = new TcpListener(IPAddress.Parse(ip), port);
             listener.Start();
             var bound = $"{ip}:{port}";
-            Log.Info($"peers: serving archive on http://{bound} (tailscale interface only)");
-            return new PeerServer(listener, store, token, bound);
+            Log.Info($"peers: serving archive on http://{bound} " +
+                     (bindIp is null ? "(tailscale interface only)" : "(explicit --bind)"));
+            return new PeerServer(listener, store, token, bound, thumbs);
         }
         catch (Exception ex)
         {
             Log.Error($"peers: failed to bind {ip}:{port}: {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>Tailscale hands out IPv4 from the CGNAT block 100.64.0.0/10 —
+    /// the only non-loopback range an explicit --bind can name without leaving
+    /// the tailnet's encryption.</summary>
+    private static bool IsTailnetAddress(IPAddress ip)
+    {
+        if (ip.AddressFamily != AddressFamily.InterNetwork) return false;
+        var b = ip.GetAddressBytes();
+        return b[0] == 100 && b[1] >= 64 && b[1] <= 127;
     }
 
     private async Task AcceptLoopAsync()
@@ -133,10 +182,25 @@ public sealed class PeerServer : IDisposable
             var request = await HttpRequest.ReadAsync(stream, _cts.Token);
             if (request is null) return;
 
+            // Bodies are Content-Length framed only (docs/PROTOCOL.md
+            // "Transport"). A chunked body would silently parse as empty and
+            // fail downstream as a baffling 400 — refuse it by name instead.
+            if (request.Headers.TryGetValue("Transfer-Encoding", out var te) &&
+                te.Contains("chunked", StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Warn($"peers: 411 {request.Method} {request.RawPath} from {remote} (chunked body)");
+                await WriteJsonAsync(stream, 411, new { error = "content-length required" });
+                return;
+            }
+
             // /pair is the one PIN-authenticated route — the caller doesn't
-            // have the token yet; getting it is the point. Everything else
-            // stays strictly token-gated.
-            if (request.Method == "POST" && request.Path == "/pair")
+            // have the token yet; getting it is the point. Only while a window
+            // is open, though: closed, the route must be indistinguishable
+            // from one that doesn't exist (401 without a token, 404 with one),
+            // or any host that can reach the port could fingerprint an esgee
+            // server and its pairing state without holding a token.
+            if (request.Method == "POST" && request.Path == "/pair" &&
+                _pairing is { Active: true })
             {
                 await HandlePairAsync(stream, request, remote);
                 return;
@@ -178,8 +242,8 @@ public sealed class PeerServer : IDisposable
         {
             Log.Info($"peers: /ping from {remote}");
             await WriteJsonAsync(stream, 200, new PingDto(
-                "esgee", UpdateService.CurrentVersion, PeerProtocol.Version,
-                Environment.MachineName, _store.Count()));
+                "esgee", AppVersion.Current, PeerProtocol.Version,
+                Environment.MachineName, _store.Count(), Capabilities));
             return;
         }
 
@@ -239,7 +303,7 @@ public sealed class PeerServer : IDisposable
             byte[] jpeg;
             try
             {
-                jpeg = EncodeThumb(shot.ThumbPath);
+                jpeg = _thumbs.EncodeThumb(shot.ThumbPath);
             }
             catch (Exception ex)
             {
@@ -290,17 +354,22 @@ public sealed class PeerServer : IDisposable
         await WriteJsonAsync(stream, 404, new { error = "no such endpoint" });
     }
 
-    /// <summary>POST /pair: redeem the on-screen PIN for the PeerToken. Answers
-    /// 404 whenever no pairing window is open (or the session is spent), 401 on
-    /// a wrong PIN, 200 with the token exactly once. PIN and token values never
-    /// reach the log — only outcomes do.</summary>
+    /// <summary>POST /pair: redeem the on-screen PIN for the PeerToken. Only
+    /// reached while a pairing window is open — closed, the connection handler
+    /// lets the route fall through the ordinary token gate so it looks exactly
+    /// like a route that doesn't exist. 401 "wrong pin" on a miss, 200 with the
+    /// token exactly once. PIN and token values never reach the log — only
+    /// outcomes do.</summary>
     private async Task HandlePairAsync(NetworkStream stream, HttpRequest req, string remote)
     {
         var session = _pairing;
         if (session is null || !session.Active)
         {
+            // The window closed between the handler's gate and here: answer
+            // exactly like any other tokenless request so the race can't leak
+            // the route's existence.
             Log.Info($"peers: /pair from {remote} rejected — no pairing in progress");
-            await WriteJsonAsync(stream, 404, new { error = "no pairing in progress" });
+            await WriteJsonAsync(stream, 401, new { error = "missing or wrong token" });
             return;
         }
 
@@ -326,8 +395,10 @@ public sealed class PeerServer : IDisposable
                 await WriteJsonAsync(stream, 401, new { error = "wrong pin" });
                 return;
             default:
+                // Spent mid-request (consumed, expired, or locked out) — same
+                // shape as the closed-window answer, for the same reason.
                 Log.Info($"peers: /pair from {remote} rejected — no pairing in progress");
-                await WriteJsonAsync(stream, 404, new { error = "no pairing in progress" });
+                await WriteJsonAsync(stream, 401, new { error = "missing or wrong token" });
                 return;
         }
     }
@@ -422,26 +493,6 @@ public sealed class PeerServer : IDisposable
                long.TryParse(path.AsSpan(prefix.Length), out id);
     }
 
-    /// <summary>Small JPEG for grid tiles — decoded scaled-down (never the full
-    /// bitmap) on this worker thread, far from the UI dispatcher.</summary>
-    private static byte[] EncodeThumb(string sourcePath)
-    {
-        using var fs = File.OpenRead(sourcePath);
-        var bmp = new BitmapImage();
-        bmp.BeginInit();
-        bmp.StreamSource = fs;
-        bmp.DecodePixelWidth = 448;
-        bmp.CacheOption = BitmapCacheOption.OnLoad;
-        bmp.EndInit();
-        bmp.Freeze();
-
-        var encoder = new JpegBitmapEncoder { QualityLevel = 80 };
-        encoder.Frames.Add(BitmapFrame.Create(bmp));
-        using var ms = new MemoryStream();
-        encoder.Save(ms);
-        return ms.ToArray();
-    }
-
     // ---- HTTP plumbing ------------------------------------------------------
 
     private static Task WriteJsonAsync(NetworkStream stream, int status, object body)
@@ -486,7 +537,7 @@ public sealed class PeerServer : IDisposable
     private static string Reason(int status) => status switch
     {
         200 => "OK", 400 => "Bad Request", 401 => "Unauthorized",
-        404 => "Not Found", _ => "Error",
+        404 => "Not Found", 411 => "Length Required", _ => "Error",
     };
 
     public void Dispose()

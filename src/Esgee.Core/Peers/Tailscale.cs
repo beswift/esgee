@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text.Json;
 
 namespace Esgee.Peers;
@@ -9,19 +12,52 @@ public sealed record TailnetNode(string HostName, string Ip, bool Online, bool S
 /// <summary>
 /// Thin wrapper over the tailscale CLI. The CLI is the source of truth for
 /// "what is my tailnet address" and "who else is on the tailnet" — no config
-/// duplication, and it works with whatever login the user already has.
-/// All calls shell out, so callers must stay off the UI thread.
+/// duplication, and it works with whatever login the user already has. The
+/// one shortcut is reading the self address straight off Tailscale's own
+/// adapter, which reports the same answer without a process spawn.
+/// All other calls shell out, so callers must stay off the UI thread.
 /// </summary>
 public static class Tailscale
 {
     /// <summary>This machine's IPv4 tailnet address (100.x.y.z), or null when
-    /// tailscale is not installed / not running / logged out.</summary>
+    /// tailscale is not installed / not running / logged out. The interface
+    /// scan answers without spawning a process — this sits on the server
+    /// startup path — but only the Tailscale adapter's own address counts;
+    /// the CLI remains the fallback for setups (userspace networking) where
+    /// no local adapter carries the tailnet address.</summary>
     public static string? SelfIPv4()
     {
+        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (nic.OperationalStatus != OperationalStatus.Up || !IsTailscaleNic(nic)) continue;
+            foreach (var unicast in nic.GetIPProperties().UnicastAddresses)
+                if (unicast.Address.AddressFamily == AddressFamily.InterNetwork &&
+                    IsCgnat(unicast.Address))
+                    return unicast.Address.ToString();
+        }
+
         var output = Run("ip -4");
         var line = output?.Split('\n').Select(l => l.Trim())
             .FirstOrDefault(l => l.Length > 0);
-        return line is not null && System.Net.IPAddress.TryParse(line, out _) ? line : null;
+        return line is not null && IPAddress.TryParse(line, out _) ? line : null;
+    }
+
+    /// <summary>The adapter must identify itself as Tailscale's before its
+    /// address is trusted. PeerServer binds whatever this class returns, and
+    /// "reachability = tailnet membership" (docs/PROTOCOL.md) only holds when
+    /// the socket sits on the tailnet interface itself.</summary>
+    private static bool IsTailscaleNic(NetworkInterface nic)
+        => nic.Name.Contains("tailscale", StringComparison.OrdinalIgnoreCase) ||
+           nic.Description.Contains("tailscale", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Tailscale assigns from 100.64.0.0/10 — the CGNAT block. The
+    /// range alone is not proof of tailnet membership (carrier CGNAT and other
+    /// mesh VPNs hand out the same block), which is why the scan above also
+    /// requires the Tailscale adapter itself.</summary>
+    private static bool IsCgnat(IPAddress ip)
+    {
+        var b = ip.GetAddressBytes();
+        return b[0] == 100 && (b[1] & 0b1100_0000) == 0b0100_0000;
     }
 
     /// <summary>All tailnet nodes (self included) with an IPv4 address.</summary>

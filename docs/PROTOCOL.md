@@ -1,7 +1,7 @@
 # esgee wire protocol
 
 The contract every esgee implementation shares. Windows (`src/Esgee/`) is the
-reference implementation of **proto 1**. The Mac app
+reference implementation of **proto 2**. The Mac app
 ([docs/MAC.md](MAC.md)) and the share node
 ([docs/SHARES.md](SHARES.md)) implement this document, not each other.
 
@@ -36,6 +36,13 @@ endpoints: the WireGuard link is already encrypted end to end, so TLS would
 add certificate management for zero additional confidentiality. Endpoints
 reachable outside a tailnet **must** be `https://`.
 
+Request bodies are framed by `Content-Length` only. Servers do not decode
+`Transfer-Encoding: chunked` and answer such requests
+`411 {"error": "content-length required"}` — clients must buffer uploads and
+send an exact length (an HTTP stack given an unknown-length stream, e.g. a Go
+`http.Client` with a `Reader` body, will chunk by default and must be told
+not to).
+
 Reachability is the first gate: a tailnet server binds exclusively to its own
 Tailscale address (never `0.0.0.0`), so only devices admitted to the tailnet
 can open a socket at all. Authorization is the second: every request carries
@@ -62,10 +69,11 @@ hosted     https://relay.example/s/design-team     (hypothetical)
 Clients treat the base URL as opaque and concatenate route paths onto it.
 Implementations must not reconstruct addresses from a host and port field.
 
-> Proto 1 as shipped models peers as `(host, port)` and builds
-> `http://{host}:{port}`. Migrating that field to a base URL is the single
-> highest-leverage change in this document and is backward compatible —
-> existing `Peers` settings entries (`name=host:port`) expand to the same URL.
+> Proto 1 modeled peers as `(host, port)` and built `http://{host}:{port}`.
+> Proto 2 (shipped on Windows) stores the base URL itself: existing `Peers`
+> settings entries (`name=host:port` / `host:port`) expand to the same URL
+> they always did, and full-URL entries (`name=http://…` / `https://…`) are
+> accepted as-is.
 
 ## Capability negotiation
 
@@ -98,7 +106,9 @@ Defined capabilities:
 | `annotate` | Accepts annotation and comment writes |
 | `record` | Archive may contain `kind: "video"` items with GIF siblings |
 
-## Peer routes (proto 1 — shipping)
+The Windows implementation answers `["peer", "record"]`.
+
+## Peer routes (shipping)
 
 ```
 GET  /ping          {app, version, proto, machine, captures[, capabilities]}
@@ -173,12 +183,30 @@ move on.
 ### Pairing
 
 `POST /pair` is answered only while a pairing window is open on the serving
-machine — 404 otherwise, so the route is invisible the rest of the time. The
-PIN is 6 digits from a CSPRNG, compared in constant time, single-use, expires
-with the window or at two minutes, and five wrong guesses close the session.
-A successful response is the only time a token crosses the wire.
+machine. The PIN is 6 digits from a CSPRNG, compared in constant time,
+single-use, expires with the window or at two minutes, and five wrong guesses
+close the session. A successful response is the only time a token crosses
+the wire.
 
-## Share routes (proto 2 — designed, not built)
+Responses are part of this contract — clients classify outcomes by status
+**and** body, so the bodies below are normative, not decoration:
+
+| State | Response |
+|---|---|
+| PIN correct | `200 {"token": "…", "machine": "…"}` |
+| PIN wrong, window open | `401 {"error": "wrong pin"}` |
+| Malformed body / empty pin, window open | `400 {"error": "bad pair request"}` |
+| No window open (or session spent) | as if the route did not exist — see below |
+
+When no window is open, `/pair` must be indistinguishable from a route the
+server never had: without a valid token the answer is the ordinary
+`401 {"error": "missing or wrong token"}`, and with one it is
+`404 {"error": "no such endpoint"}`. Anything more specific (an earlier
+revision answered a distinctive 404 body) lets any host that can reach the
+port fingerprint an esgee server and its pairing state without holding a
+token.
+
+## Share routes (designed, not built)
 
 Shares are a different noun from peers and get their own namespace. See
 [docs/SHARES.md](SHARES.md) for the model and the UX; this section is the

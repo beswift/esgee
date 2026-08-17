@@ -51,8 +51,9 @@ public partial class App : Application
         }
 
         // Query mode runs against the same archive and exits without a tray icon,
-        // so it must be handled before the singleton check.
-        if (Cli.TryRun([.. args], _settings))
+        // so it must be handled before the singleton check. Portable verbs live
+        // in Core's Cli; the clipboard-bound check verbs in CliChecks.
+        if (Cli.TryRun([.. args], _settings) || CliChecks.TryRun([.. args], _settings))
         {
             Shutdown();
             return;
@@ -68,7 +69,7 @@ public partial class App : Application
             var port = int.TryParse(TakeOption(args, "port"), out var p) ? p : _settings.PeerPort;
             var token = TakeOption(args, "token") ?? _settings.PeerToken;
             _store = new ShotStore(_settings.ArchiveRoot);
-            _peerServer = PeerServer.TryStart(_store, token, port);
+            _peerServer = PeerServer.TryStart(_store, token, port, new Interop.WpfThumbEncoder());
             if (_peerServer is null)
             {
                 Log.Error("serve mode: server failed to start; exiting");
@@ -222,7 +223,8 @@ public partial class App : Application
         {
             var token = _settings.PeerToken;
             var port = _settings.PeerPort;
-            _serverTask = Task.Run(() => PeerServer.TryStart(_store, token, port));
+            _serverTask = Task.Run(() =>
+                PeerServer.TryStart(_store, token, port, new Interop.WpfThumbEncoder()));
         }
 
         var server = await _serverTask;

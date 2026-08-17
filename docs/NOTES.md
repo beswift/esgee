@@ -98,12 +98,14 @@ machine auto-enables peers and mints the token. Disabling peers from the
 tray closes every socket but keeps the token, so re-pairing is instant.
 Neither PIN nor token values are ever logged; only outcomes are.
 
-**The API** (HTTP/1.1 + JSON, snake_case, `proto: 1` in /ping). This section
+**The API** (HTTP/1.1 + JSON, snake_case, `proto: 2` in /ping). This section
 describes what ships; [docs/PROTOCOL.md](PROTOCOL.md) is the normative
 contract a second implementation writes against:
 
 ```
-GET  /ping          {app, version, proto, machine, captures}
+GET  /ping          {app, version, proto, machine, captures, capabilities}
+                    Windows answers capabilities: ["peer", "record"]; a peer
+                    that omits the field is proto 1 and implicitly ["peer"]
 GET  /recent?n=     newest captures (metadata list)
 GET  /search?q=     FTS5 search, same quoting rules as the archive window
 GET  /meta/{id}     one capture, including ocr_text + ocr_engine_version
@@ -151,7 +153,9 @@ loops).
 
 **Remote browsing:** the archive window's machine switcher discovers peers
 by probing `tailscale status --json` nodes for `/ping` with the token
-(manual `Peers` entries as fallback). A remote tile's thumbnail streams from
+(manual `Peers` entries — `name=host:port` or full `name=http(s)://…` URLs —
+as fallback). A peer is a name plus an opaque base URL; routes are appended,
+never rebuilt from host/port parts. A remote tile's thumbnail streams from
 `/thumb` off the UI thread; drag-out **must** hand CF_HDROP a real file, so
 remote files are materialized into `%LOCALAPPDATA%\esgee\peercache\<peer>\`
 — prefetched on mouse-down and on preview, so the drag is usually instant; a

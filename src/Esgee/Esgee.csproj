@@ -50,11 +50,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
-    <!-- Microsoft.Data.Sqlite 10.0.0 still drags in SQLitePCLRaw 2.1.11, which
-         carries GHSA-2m69-gcr7-jv3q. A direct reference overrides the
-         transitive one. -->
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+    <!-- Store, peers, settings, log, headless CLI — everything that also runs
+         on the Linux node. Sqlite (and its pinned SQLitePCLRaw) ride along
+         transitively. -->
+    <ProjectReference Include="..\Esgee.Core\Esgee.Core.csproj" />
     <!-- Install/update framework: GitHub Releases feed, delta updates, no
          code-signing requirement. See UpdateService.cs. -->
     <PackageReference Include="Velopack" Version="1.2.0" />
