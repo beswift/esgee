@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>esgee — fast screenshots for Windows, searchable by what they said</title>
-<meta name="description" content="Hotkey → capture → a floating card you can drag into any app. Every screenshot auto-saves and is OCR-indexed locally — search your history by the text that was on screen. Open source, MIT, local-first.">
+<meta name="description" content="Hotkey → capture → a floating card you can drag into any app. Every screenshot auto-saves and is OCR-indexed locally — search your history by the text that was on screen, copy the text back out, and sync captures between your machines over your own tailnet. Open source, MIT, local-first.">
 <link rel="icon" type="image/png" sizes="256x256" href="assets/esgee-256.png">
 <link rel="apple-touch-icon" href="assets/esgee-256.png">
 <meta name="theme-color" content="#07090f">
 <meta property="og:type" content="website">
 <meta property="og:title" content="esgee — fast screenshots for Windows">
-<meta property="og:description" content="Hotkey → capture → drag the card anywhere. OCR-searchable screenshot history, screen recording, agent-friendly CLI. Local-first and MIT.">
+<meta property="og:description" content="Hotkey → capture → drag the card anywhere. OCR-searchable screenshot history, copyable screen text, screen recording, multi-machine sync over your tailnet, agent-friendly CLI. Local-first and MIT.">
 <meta property="og:url" content="https://beswift.github.io/esgee/">
 <meta property="og:image" content="https://beswift.github.io/esgee/assets/esgee-256.png">
 <meta name="twitter:card" content="summary">
@@ -367,6 +367,16 @@
           <div class="hit"><span class="th"></span><span>docker: <mark>connection refused</mark> on :5432&hellip;</span><span class="when">tue 09:14</span></div>
           <div class="hit"><span class="th"></span><span>curl: (7) <mark>Connection refused</mark></span><span class="when">jul 12</span></div>
         </div>
+      </div>
+
+      <div class="feature">
+        <h3><span class="fic"><svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 11h10"/><path d="M4 16h13"/><path d="m17 14 3 3-3 3" opacity=".8"/></svg></span>The text comes back out</h3>
+        <p>OCR isn&rsquo;t just for search. Right-click any capture &rarr; <strong>Copy text</strong> and the words on that screenshot land on your clipboard; or open the <strong>Screen text</strong> panel in the preview to read and select the full text. A screenshot of an error <em>is</em> the error message.</p>
+      </div>
+
+      <div class="feature">
+        <h3><span class="fic"><svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="3"/><circle cx="18" cy="17" r="3"/><path d="M8.5 8.8 15.5 15.2"/><path d="M18 7h.01" opacity=".5"/><path d="M6 17h.01" opacity=".5"/></svg></span>All your machines, one archive</h3>
+        <p>Pair your PCs with a 6-digit PIN &mdash; no accounts, no cloud. Browse and search each other&rsquo;s captures from a switcher in the archive, drag a remote shot out as a real file, pull it local for keeps, or auto-push every capture to your main box. Data moves only inside your own <a href="https://tailscale.com" style="color:var(--muted)">Tailscale</a> tailnet.</p>
       </div>
 
       <div class="feature">

@@ -10,10 +10,15 @@ text that was on screen**.
   app as a real file, click to re-copy, or just ignore it (it's already saved).
 - **OCR search** — every capture is indexed locally (Windows' built-in OCR +
   SQLite FTS5). Find any screenshot by what it said, in milliseconds.
+- **The text comes back out** — right-click any capture → **Copy text**, or
+  open the **Screen text** panel in the preview to read and select it. A
+  screenshot of an error *is* the error message.
 - **Recording** — one hotkey records a region to MP4, short clips get a
   paste-ready GIF.
 - **Instant repeats** — re-shoot your last region with one key while you
   iterate on a UI.
+- **Multi-machine** — pair your PCs with a 6-digit PIN and browse, search,
+  pull, and push captures between them — entirely inside your own tailnet.
 
 Local-first: nothing leaves your machine unless you enable
 [Peers](#peers--sync) — and then data moves only between your own machines,
@@ -51,7 +56,9 @@ the clipboard.
 
 - **GUI:** double-click the tray icon (or `esgee --archive`) —
   search-as-you-type across the text of every capture; drag any tile out as a
-  file.
+  file. Click a tile to preview it; the **Screen text** button opens a panel
+  with the capture's full OCR text — selectable, with one-click copy-all.
+  Right-click any tile → **Copy text** skips the preview entirely.
 - **CLI:** `esgee --search "connection refused"` / `esgee --recent 20`.
 - **Health check:** `esgee --doctor` — archive stats, duplicate detection, and
   a digest of the local log. Runs entirely offline; paste it into bug reports.
