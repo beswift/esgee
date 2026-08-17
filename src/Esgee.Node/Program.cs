@@ -37,6 +37,8 @@ internal static class Program
 
             usage:
               esgee-node --serve --archive-root <dir> --port <p> --token <t> [--bind <ip>]
+                     (--token-file <path> reads the token from a file instead,
+                      keeping it out of process listings and unit files)
               esgee-node --recent [n]        [--archive-root <dir>]
               esgee-node --search <words...> [--archive-root <dir>]
               esgee-node --doctor            [--archive-root <dir>]
@@ -54,6 +56,18 @@ internal static class Program
         var port = int.TryParse(TakeOption(args, "port"), out var p) ? p : settings.PeerPort;
         var token = TakeOption(args, "token") ?? settings.PeerToken;
         var bind = TakeOption(args, "bind");
+
+        // --token-file keeps the secret out of `ps` output and unit files —
+        // the systemd-friendly way to pass it. Wins over --token when both given.
+        if (TakeOption(args, "token-file") is { } tokenFile)
+        {
+            try { token = File.ReadAllText(tokenFile).Trim(); }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"esgee-node: cannot read --token-file: {ex.Message}");
+                return 1;
+            }
+        }
 
         // Every recognized option has been consumed; anything left besides the
         // serve flag itself is a typo (--archive_root, --prot) that would
