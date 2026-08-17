@@ -1,0 +1,87 @@
+# XcodeGen spec — the .xcodeproj is generated, never committed:
+#
+#   cd mac && xcodegen generate
+#
+# The project file stays out of git so diffs stay readable, merges never
+# conflict, and an agent can regenerate it headlessly (docs/MAC.md
+# "Repo layout").
+
+name: esgee
+
+options:
+  bundleIdPrefix: com.esgee
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+
+packages:
+  # The one external dependency (docs/MAC.md "Distribution"). Everything else
+  # is system frameworks by design — instant cold start is part of the app's
+  # identity, and every framework added is paid for on every Sparkle update.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+targets:
+  esgee:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources
+    dependencies:
+      - package: Sparkle
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.esgee.mac
+        PRODUCT_NAME: esgee
+        # The Screen Recording grant is bound to the code signature; hardened
+        # runtime is also a notarization prerequisite. Both are why a signed
+        # build keeps its TCC grant across updates and an ad-hoc one re-prompts
+        # forever (docs/MAC.md "Screen Recording permission").
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: Resources/esgee.entitlements
+        # Local builds sign ad hoc and report 0.0.0, exactly like the Windows
+        # build. CI overrides from the release tag:
+        #   xcodebuild MARKETING_VERSION=$TAG \
+        #     CODE_SIGN_IDENTITY="Developer ID Application" DEVELOPMENT_TEAM=$TEAM
+        CODE_SIGN_IDENTITY: "-"
+        MARKETING_VERSION: "0.0.0"
+        CURRENT_PROJECT_VERSION: "0"
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleDisplayName: esgee
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # Menu-bar app: no Dock tile, no app switcher entry.
+        LSUIElement: true
+        LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
+        NSPrincipalClass: NSApplication
+        NSHumanReadableCopyright: "esgee"
+        # Shown inside the Screen Recording TCC prompt — the single worst
+        # first-run moment on macOS, so the wording has to earn the click.
+        NSScreenCaptureUsageDescription: >-
+          esgee captures your screen to put screenshots on its shelf and in
+          your archive. Captures stay on this Mac and on machines you pair.
+        # Sparkle 2. CI injects the real EdDSA public key at build time; an
+        # empty key merely disables updates for local builds.
+        SUFeedURL: https://beswift.github.io/esgee/appcast.xml
+        SUPublicEDKey: ""
+        SUEnableAutomaticChecks: true
+    entitlements:
+      path: Resources/esgee.entitlements
+      properties:
+        # No App Sandbox, deliberately: it fights the archive tree and the
+        # peer server for no gain on a tool you install once (docs/MAC.md
+        # "Deliberate non-goals"). Hardened runtime is set above instead.
+        com.apple.security.app-sandbox: false
+    scheme:
+      testTargets: []
+      gatherCoverageData: false

@@ -4,6 +4,10 @@ obj/
 publish/
 Releases/
 
+# local promote/probe scratch — real-settings.json inside carries the live
+# PeerToken, so this directory must never be committable
+build/
+
 # user/IDE state
 *.user
 *.suo
@@ -12,3 +16,8 @@ Releases/
 
 # local agent state
 .claude/
+
+# macOS app — the project is generated from mac/project.yml (xcodegen)
+mac/*.xcodeproj
+mac/DerivedData/
+mac/.build/
