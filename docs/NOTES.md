@@ -98,7 +98,9 @@ machine auto-enables peers and mints the token. Disabling peers from the
 tray closes every socket but keeps the token, so re-pairing is instant.
 Neither PIN nor token values are ever logged; only outcomes are.
 
-**The API** (HTTP/1.1 + JSON, snake_case, `proto: 1` in /ping):
+**The API** (HTTP/1.1 + JSON, snake_case, `proto: 1` in /ping). This section
+describes what ships; [docs/PROTOCOL.md](PROTOCOL.md) is the normative
+contract a second implementation writes against:
 
 ```
 GET  /ping          {app, version, proto, machine, captures}

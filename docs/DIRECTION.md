@@ -6,6 +6,11 @@ constraint that overrides everything below: **keep the current aesthetic and
 the simplified nature of the app.** Everything ships fast, feels tight, runs
 local-first. Any feature that bogs that down is wrong even if it's useful.
 
+> **Designs since drafted** (2026-08-16): goal 1 is now
+> [docs/MAC.md](MAC.md), goal 2 is [docs/SHARES.md](SHARES.md), and the
+> contract both stand on is [docs/PROTOCOL.md](PROTOCOL.md). Where those
+> disagree with the open questions below, they are the later thinking.
+
 ## Context: how the app is actually used today
 
 - Ben uses esgee on every Windows machine he owns, daily, heavily.
