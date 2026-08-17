@@ -123,7 +123,10 @@ public sealed class PeerClient : IDisposable
 
     private async Task DownloadAsync(string route, string dest, bool optional = false)
     {
-        var tmp = dest + ".part";
+        // Unique per attempt — two fetches of the same shot (Entry replaced by
+        // a refresh mid-prefetch, or a second archive process) must not fight
+        // over one temp name or delete each other's in-flight file.
+        var tmp = dest + "." + Guid.NewGuid().ToString("N")[..8] + ".part";
         try
         {
             using var response = await _http.GetAsync(route, HttpCompletionOption.ResponseHeadersRead);
@@ -134,7 +137,15 @@ public sealed class PeerClient : IDisposable
             }
             await using (var fs = File.Create(tmp))
                 await response.Content.CopyToAsync(fs);
-            File.Move(tmp, dest, overwrite: true);
+            try
+            {
+                File.Move(tmp, dest, overwrite: true);
+            }
+            catch (Exception) when (File.Exists(dest))
+            {
+                // Two racing moves can collide on the destination itself; the
+                // bytes are identical, so whoever landed is right.
+            }
         }
         finally
         {

@@ -18,6 +18,10 @@ public partial class ShelfWindow : Window
     public TimeSpan Linger { get; set; } = TimeSpan.FromSeconds(8);
     public int MaxCards { get; set; } = 6;
 
+    /// <summary>Set by the app when it owns a store; cards grow their share
+    /// icon only while this is present AND shares are configured.</summary>
+    public Esgee.Shares.SharePusher? SharePush { get; set; }
+
     public ShelfWindow(Action beforeClipboardWrite)
     {
         InitializeComponent();
@@ -50,7 +54,7 @@ public partial class ShelfWindow : Window
         while (Cards.Children.Count >= MaxCards)
             ((ShotCard)Cards.Children[0]).Leave();
 
-        var card = new ShotCard(shot, Linger, Remove, _beforeClipboardWrite);
+        var card = new ShotCard(shot, Linger, Remove, _beforeClipboardWrite, SharePush);
         Cards.Children.Add(card); // newest sits closest to the corner
 
         Anchor();

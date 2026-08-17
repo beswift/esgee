@@ -105,15 +105,23 @@ boundary.
 
 ### The node itself
 
+Shipped 2026-08-17:
+
 ```
-esgee --serve-share --archive-root D:\shares\design-team \
-      --share-name "Design team" --port 43118 [--retention 90d]
+esgee-node --serve-share --archive-root /srv/esgee/design-team \
+           --share-name "Design team" --token-file /etc/esgee/share-op.token \
+           [--port 43118] [--bind <ip>] [--retention 90]
 ```
 
 It is a peer server with the share routes, a `members` table, and no capture
 pipeline. Its archive root is its own — a share's contents are never
 commingled with a personal archive, even when the node runs on a machine that
-also runs esgee normally.
+also runs esgee normally (the flag is mandatory for exactly that reason). The
+token is the **operator's** bootstrap credential: it registers (or re-keys,
+on rotation) the share's operator member at startup, and members never see
+it. All share state lives in the share archive's own `index.db` — additive
+`members` / `invites` / `share_items` / `comments` tables beside the ordinary
+`shots` — so one folder is still the whole share.
 
 ### The node is a Linux binary (minimax is Linux)
 
@@ -134,11 +142,11 @@ src/Esgee.Node/   net10.0        esgee-node console app: --serve /
                                  linux-x64; systemd unit on minimax
 ```
 
-`EncodeThumb` goes behind a seam: WPF keeps `BitmapImage`; the node either
-uses ImageSharp or — simpler — pre-encodes the 448px JPEG once at ingest,
-which suits a share (items are write-once) and removes per-request decode
-work entirely. The hand-rolled `TcpListener` responder is platform-neutral
-as-is, and the no-Kestrel rationale holds even better on a headless node.
+`EncodeThumb` sits behind the `IThumbEncoder` seam (shipped): WPF keeps
+`BitmapImage`, the node uses ImageSharp. The hand-rolled `TcpListener`
+responder proved platform-neutral as-is — the share server reuses its
+request parser, response writer, and bind policy verbatim — and the
+no-Kestrel rationale holds even better on a headless node.
 
 The node never OCRs (no WinRT dependency): items arrive with sidecar text,
 and the client-side rule below (don't push OCR-pending images) closes the
@@ -151,12 +159,18 @@ headless share node has nobody standing at it, so the flow inverts: the
 operator mints, the member redeems.
 
 ```
-operator:  esgee --share-invite "Ben"
-           → esgee-share://100.64.0.9:43118/s/design-team#8fK2q…
+operator:  esgee-node --share-invite --hint "Ben" --archive-root /srv/esgee/design-team
+           → 8fK2q…                                  (the code, single-use, 24h)
+           → esgee-share://100.64.0.9:43118#8fK2q…   (host = the node's tailnet
+             IP at mint time; rewrite it if members reach the node elsewhere)
 member:    Tray → "Join a team share…" → paste → choose display name → in
 ```
 
-The invite is single-use, expires (24h), and is bound to nothing until
+Both halves are shipped: the wire side (invite mint, `POST /share/join`,
+per-member tokens, hint fallback for the display name;
+`ShareClient.ParseInviteUrl` / `JoinAsync` are the client half) and the tray
+join UI (`ShareJoinWindow` — paste, name, retryable outcomes kept apart from
+the fatal one). The invite is single-use, expires (24h), and is bound to nothing until
 redeemed. Redeeming mints **that member's own token** and records their chosen
 display name. From then on the server stamps `shared_by` and comment
 authorship from the token — never from a client-supplied field, so a member
@@ -241,8 +255,10 @@ email. A dot is enough to make you look, and looking is one click.
 
 ## Retention and deletion
 
-The node owns its retention: `--retention 90d`, or unlimited. Expiry deletes
-files and tombstones ids so members can prune anything they pulled.
+The node owns its retention: `--retention 90` (days; `90d` also accepted),
+or unlimited by default. Shipped: the sweep runs at startup and hourly,
+deletes files and the capture row, and keeps the tombstoned id forever so
+members can prune anything they pulled.
 
 - A member may delete an item they shared.
 - The operator may delete anything.
@@ -298,10 +314,10 @@ above are right.
 
 | Phase | What | Blocks on |
 |---|---|---|
-| 0 | URL addressing in the Windows client; `capabilities` in `/ping`; PROTOCOL.md as the normative doc | nothing — do it now, it's backward compatible |
+| 0 | ~~URL addressing in the Windows client; `capabilities` in `/ping`; PROTOCOL.md as the normative doc~~ **shipped** | nothing — do it now, it's backward compatible |
 | 1 | Mac app ([docs/MAC.md](MAC.md)) | phase 0 for addressing |
-| 2 | `Esgee.Core`/`Esgee.Node` split; `--serve-share` node on minimax (linux-x64), member tokens, invite/join, push from the card, browse in the switcher | phase 0 |
-| 3 | Comments, annotation layer, redaction bake, the notification dot | phase 2 |
+| 2 | ~~`Esgee.Core`/`Esgee.Node` split; `--serve-share` node (linux-x64 capable), member tokens, invite/join; tray join UI, push from the card and the archive tile, browse in the switcher~~ **shipped 2026-08-17** — still open: deploy on minimax | phase 0 |
+| 3 | ~~Comments~~ **shipped on the node**; still open: annotation layer, redaction bake, the notification dot (the `?since=` query it polls is live) | phase 2 |
 | — | MCP server | nothing; can jump the queue any time |
 
 Phase 0 is small enough to land alongside ordinary work and it is the only
@@ -315,6 +331,7 @@ part that gets harder the longer it waits.
    including free.** Dry-run the invite flow from a second account before
    involving the team.
 3. Retention default — 90 days, or unlimited until someone complains?
+   (The shipped node defaults to unlimited; `--retention` opts in.)
 4. Does a share want its own OCR pass? Items arrive with sidecar text from
    whichever engine took them, which is correct; but a share node with no
    OCR engine cannot fill a hole left by `ocr_text: null`. Simplest answer:

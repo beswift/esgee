@@ -43,6 +43,11 @@
                     <Button x:Name="FolderBtn" Style="{StaticResource IconButton}"
                             Content="&#xE838;" FontFamily="Segoe Fluent Icons"
                             ToolTip="Show in folder" />
+                    <!-- The fifth icon (docs/SHARES.md "the Slack bar"):
+                         collapsed until a team share is configured. -->
+                    <Button x:Name="ShareBtn"  Style="{StaticResource IconButton}"
+                            Content="&#xE72D;" FontFamily="Segoe Fluent Icons"
+                            ToolTip="Push to team share" Visibility="Collapsed" />
                     <Button x:Name="PinBtn"    Style="{StaticResource IconButton}"
                             Content="&#xE718;" FontFamily="Segoe Fluent Icons"
                             ToolTip="Keep on shelf" />
@@ -57,6 +62,17 @@
             <Border x:Name="TimerTrack" Height="2" VerticalAlignment="Bottom"
                     HorizontalAlignment="Left" CornerRadius="1"
                     Background="{StaticResource Accent}" Width="184" />
+
+            <!-- Share outcome: a quiet badge, top-right so it never fights the
+                 recording badge. Never a dialog, never a toast — anything
+                 modal here loses to Slack on feel (docs/SHARES.md). -->
+            <Border x:Name="ShareBadge" Visibility="Collapsed"
+                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Margin="6" CornerRadius="5" Padding="6,2,7,3"
+                    Background="{StaticResource Scrim}">
+                <TextBlock x:Name="ShareBadgeText" FontSize="11"
+                           Foreground="{StaticResource Ink}" />
+            </Border>
 
             <!-- Confirmation flash on copy. -->
             <Border x:Name="Flash" CornerRadius="7" Background="White" Opacity="0"

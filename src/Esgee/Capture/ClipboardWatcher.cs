@@ -90,6 +90,14 @@ public sealed class ClipboardWatcher : IDisposable
             {
                 var now = DateTimeOffset.Now;
 
+                // esgee's own writes carry a private marker format. The time
+                // window above only covers THIS process; the marker is what
+                // catches a copy made by a standalone `esgee --archive`
+                // window, which must never re-enter this pipeline as a
+                // capture (share browsing writes nothing without a pull).
+                if (System.Windows.Clipboard.ContainsData(DragSource.ClipboardMarker))
+                    return null;
+
                 // Prefer real PNG bytes. Avoids WPF's long-standing CF_DIB alpha
                 // bug, which renders screenshots fully transparent.
                 if (System.Windows.Clipboard.ContainsData("PNG") &&

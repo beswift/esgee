@@ -11,6 +11,15 @@ namespace Esgee.Interop;
 /// </summary>
 public static class DragSource
 {
+    /// <summary>Private clipboard format stamped on every DataObject esgee
+    /// writes. The clipboard watcher skips content carrying it — the only
+    /// self-echo signal that works ACROSS processes: a standalone
+    /// `esgee --archive` window can't reach the resident watcher's
+    /// IgnoreNextChange, and without this its "Copy to clipboard" on a share
+    /// or peer item re-enters the resident pipeline as a fresh capture
+    /// (docs/SHARES.md: nothing lands in your archive unless you pull it).</summary>
+    public const string ClipboardMarker = "esgee.internal";
+
     /// <summary>
     /// Offers the shot in three formats at once so any drop target is satisfied:
     /// Explorer and file pickers take CF_HDROP, image-native apps take the PNG
@@ -19,6 +28,7 @@ public static class DragSource
     public static DataObject BuildDataObject(Shot shot)
     {
         var data = new DataObject();
+        data.SetData(ClipboardMarker, "1"); // drop targets ignore private formats
 
         // Recordings: CF_HDROP with the GIF when one exists — that's the thing
         // you paste into a chat — else the MP4. (The MP4 is always reachable via

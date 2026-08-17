@@ -13,6 +13,11 @@ public static class Log
 
     static Log() => Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
 
+    // Control characters plus the Unicode line/paragraph separators - the
+    // full set a log viewer might treat as "this line ended".
+    private static bool IsLineBreaker(char c)
+        => char.IsControl(c) || c == (char)0x2028 || c == (char)0x2029;
+
     public static void Info(string msg) => Write("INFO", msg);
     public static void Warn(string msg) => Write("WARN", msg);
     public static void Error(string msg) => Write("ERR ", msg);
@@ -21,6 +26,13 @@ public static class Log
     {
         try
         {
+            // Client-supplied text (display names, search queries) rides
+            // inside messages, and this file is what operators and agents
+            // reconstruct history from - an embedded newline would forge
+            // whole audit lines, so one event is always exactly one line
+            // (and control characters can't play terminal tricks either).
+            if (msg.Any(IsLineBreaker))
+                msg = string.Concat(msg.Select(c => IsLineBreaker(c) ? ' ' : c));
             lock (Gate)
                 File.AppendAllText(Path, $"{DateTimeOffset.Now:HH:mm:ss.fff} {level} {msg}{Environment.NewLine}");
         }

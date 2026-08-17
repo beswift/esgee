@@ -5,6 +5,7 @@ using System.Windows;
 using Esgee.Capture;
 using Esgee.Ocr;
 using Esgee.Peers;
+using Esgee.Shares;
 using Esgee.Store;
 using Esgee.Ui;
 using Forms = System.Windows.Forms;
@@ -30,6 +31,8 @@ public partial class App : Application
     private SyncQueue? _sync;
     private PairingWindow? _pairingWindow;
     private PairingEnterWindow? _pairingEnter;
+    private SharePusher? _sharePush;
+    private ShareJoinWindow? _shareJoin;
     private int _lastPeerCount = -1;
     private DateTime _lastPeerCountAt = DateTime.MinValue;
     private readonly UpdateService _update = new();
@@ -120,10 +123,12 @@ public partial class App : Application
 
         _store = new ShotStore(_settings.ArchiveRoot);
         _watcher = new ClipboardWatcher();
+        _sharePush = new SharePusher(_store, _settings);
         _shelf = new ShelfWindow(() => _watcher.IgnoreNextChange())
         {
             Linger = TimeSpan.FromSeconds(_settings.LingerSeconds),
-            MaxCards = _settings.MaxCards
+            MaxCards = _settings.MaxCards,
+            SharePush = _sharePush,
         };
         _watcher.Captured += img => OnCaptured(img, toClipboard: false);
 
@@ -353,6 +358,7 @@ public partial class App : Application
         menu.Items.Add("Search archive…", null, (_, _) => OpenArchiveWindow());
         menu.Items.Add("Open archive folder", null, (_, _) => OpenArchive());
         menu.Items.Add(BuildPeersMenu(menu));
+        menu.Items.Add(BuildSharesMenu(menu));
         menu.Items.Add("Clear shelf", null, (_, _) => _shelf.ClearAll());
         menu.Items.Add(new Forms.ToolStripSeparator());
 
@@ -478,6 +484,116 @@ public partial class App : Application
         return root;
     }
 
+    /// <summary>The Team shares submenu: join, and one entry per joined share
+    /// with a remove option. Rebuilt each open so joins/removals show without
+    /// a restart. Shares are a different noun from peers (docs/SHARES.md), so
+    /// they get their own menu rather than a corner of Peers.</summary>
+    private Forms.ToolStripMenuItem BuildSharesMenu(Forms.ContextMenuStrip menu)
+    {
+        var root = new Forms.ToolStripMenuItem("Team shares");
+
+        void Rebuild()
+        {
+            root.DropDownItems.Clear();
+            root.DropDownItems.Add(new Forms.ToolStripMenuItem(
+                "Join a team share…", null, (_, _) => OpenShareJoin()));
+
+            if (_settings.Shares.Length == 0) return;
+            root.DropDownItems.Add(new Forms.ToolStripSeparator());
+            foreach (var share in _settings.Shares)
+            {
+                var entry = share;
+                var item = new Forms.ToolStripMenuItem(entry.Name);
+                item.DropDownItems.Add(new Forms.ToolStripMenuItem(
+                    "Remove from this PC", null, (_, _) => RemoveShare(entry)));
+                root.DropDownItems.Add(item);
+            }
+        }
+
+        Rebuild();
+        menu.Opening += (_, _) => Rebuild();
+        return root;
+    }
+
+    private void OpenShareJoin()
+    {
+        if (_shareJoin is { IsLoaded: true })
+        {
+            _shareJoin.Activate();
+            return;
+        }
+        _shareJoin = new ShareJoinWindow(SaveJoinedShare);
+        _shareJoin.Show();
+        _shareJoin.Activate();
+    }
+
+    /// <summary>A join succeeded: persist the membership. Same BaseUrl = a
+    /// re-join, and the newly minted token replaces the old entry; a name
+    /// collision with a DIFFERENT share gets a numeric suffix — names key
+    /// DefaultShare and the share cache directory, so they stay unique.</summary>
+    private void SaveJoinedShare(ShareEntry entry)
+    {
+        bool SameEndpoint(ShareEntry s) => string.Equals(s.BaseUrl.TrimEnd('/'),
+            entry.BaseUrl.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+
+        var existing = _settings.Shares.ToList();
+        var replaced = existing.FirstOrDefault(SameEndpoint);
+        existing.RemoveAll(s => SameEndpoint(s));
+
+        var name = entry.Name;
+        for (var n = 2; existing.Any(s =>
+                 string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)); n++)
+            name = $"{entry.Name} ({n})";
+        entry.Name = name;
+
+        existing.Add(entry);
+        _settings.Shares = [.. existing];
+
+        // A first share becomes the default; a re-join keeps default status
+        // under the share's CURRENT name — the share may have renamed itself,
+        // and a DefaultShare left naming the replaced entry would just be
+        // cleared as dangling below, silently dropping last-used ordering.
+        if (_settings.DefaultShare.Length == 0 ||
+            (replaced is not null && _settings.DefaultShare.Equals(
+                replaced.Name, StringComparison.OrdinalIgnoreCase)))
+            _settings.DefaultShare = entry.Name;
+
+        _settings.EnforceInvariants(); // rejects a SyncTargetPeer naming this share
+        _settings.Save();
+        StopSyncIfCleared();
+        Log.Info($"shares: joined '{entry.Name}' at {entry.BaseUrl} as {entry.MemberId}");
+
+        // The join dialog just told the user the share is in the archive's
+        // machine list — make that true for a window that is already open.
+        _archive?.RefreshMachineSwitcher();
+    }
+
+    /// <summary>Forgets the membership on THIS PC only — the share, its items,
+    /// and the member row live on until the operator revokes them.</summary>
+    private void RemoveShare(ShareEntry share)
+    {
+        _settings.Shares = _settings.Shares.Where(s => !ReferenceEquals(s, share)).ToArray();
+        _settings.EnforceInvariants(); // also clears a DefaultShare left dangling
+        _settings.Save();
+        Log.Info($"shares: removed '{share.Name}' from this PC (membership still " +
+                 "exists on the share until the operator revokes it)");
+        _archive?.RefreshMachineSwitcher(); // an open switcher must drop the entry
+    }
+
+    /// <summary>EnforceInvariants clears a SyncTargetPeer that resolves to a
+    /// share — but only the setting. The running queue captured its Target at
+    /// construction and would keep shipping every new capture's bytes at the
+    /// share node (and backing off on its 401s) until restart; retire it the
+    /// moment the setting goes.</summary>
+    private void StopSyncIfCleared()
+    {
+        if (_sync is null || _settings.SyncTargetPeer.Length > 0) return;
+        var sync = _sync;
+        _sync = null;
+        Log.Info($"sync: stopping push to '{sync.Target}' — SyncTargetPeer now names a share");
+        _ = sync.DisposeAsync().AsTask();
+    }
+
     /// <summary>"Pair a new machine…": this machine shows the PIN. First use is
     /// the enable switch — it mints the token, flips PeersEnabled, and brings
     /// the server up, all without touching settings.json by hand.</summary>
@@ -554,6 +670,7 @@ public partial class App : Application
             StopServer(); // old token is dead; restart on the adopted one
         _ = EnsureServerAsync();
         _lastPeerCountAt = DateTime.MinValue; // next menu open recounts
+        _archive?.RefreshMachineSwitcher(); // an open window gains the switcher now
     }
 
     /// <summary>Peers off: server (and any open pairing window) down, zero

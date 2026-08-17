@@ -424,6 +424,21 @@ public sealed class ShotStore : IDisposable
         }
     }
 
+    /// <summary>Ingest destinations take their extension from a client-supplied
+    /// file name. Anything but a short alphanumeric extension — quotes, control
+    /// characters, a hundred-char "extension" — would make the file write throw
+    /// after the route can no longer answer 400, dropping the connection with
+    /// no response. Those fall back to the kind's default instead.</summary>
+    public static string SafeExtension(string? extension, string kind)
+    {
+        var fallback = kind == "video" ? ".mp4" : ".png";
+        if (string.IsNullOrEmpty(extension) ||
+            extension.Length is < 2 or > 10 || extension[0] != '.') return fallback;
+        for (var i = 1; i < extension.Length; i++)
+            if (!char.IsAsciiLetterOrDigit(extension[i])) return fallback;
+        return extension;
+    }
+
     /// <summary>Picks a destination path inside this archive's yyyy/MM tree for
     /// an incoming file, creating the month folder. Caller writes the bytes.</summary>
     public string PlanIngestPath(DateTimeOffset takenAt, string extension)

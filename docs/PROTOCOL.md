@@ -43,6 +43,14 @@ send an exact length (an HTTP stack given an unknown-length stream, e.g. a Go
 `http.Client` with a `Reader` body, will chunk by default and must be told
 not to).
 
+A `Content-Length` is a claim, not a purchase order. Servers must not let an
+unauthenticated request's declared length size an allocation: the share node
+caps any body that does not arrive with a valid member token on an
+authenticated capture post at 256 KB (every pre-auth body in this protocol is
+small JSON), enforces a hard deadline on reading each request, and bounds
+concurrent connections. Clients see nothing of this unless they misbehave —
+an over-cap or stalled request is dropped without a response.
+
 Reachability is the first gate: a tailnet server binds exclusively to its own
 Tailscale address (never `0.0.0.0`), so only devices admitted to the tailnet
 can open a socket at all. Authorization is the second: every request carries
@@ -106,7 +114,10 @@ Defined capabilities:
 | `annotate` | Accepts annotation and comment writes |
 | `record` | Archive may contain `kind: "video"` items with GIF siblings |
 
-The Windows implementation answers `["peer", "record"]`.
+The Windows implementation answers `["peer", "record"]`. The share node
+answers `["share", "annotate"]` — comment writes shipped first; the
+annotation-layer route is still designed-only and answers 404 until it lands,
+which additive-tolerant clients must handle anyway.
 
 ## Peer routes (shipping)
 
@@ -206,51 +217,160 @@ revision answered a distinctive 404 body) lets any host that can reach the
 port fingerprint an esgee server and its pairing state without holding a
 token.
 
-## Share routes (designed, not built)
+## Share routes (shipping)
 
 Shares are a different noun from peers and get their own namespace. See
 [docs/SHARES.md](SHARES.md) for the model and the UX; this section is the
-wire contract only.
+wire contract only. The headless node (`src/Esgee.Node`,
+`esgee-node --serve-share`) is the reference implementation; the Windows and
+Mac apps consume these routes through a share client and never serve them.
 
 ```
 GET    /share                        {id, name, members, item_count, retention_days}
 GET    /share/members                [{member_id, display_name, joined_at, role}]
-GET    /share/items?since=&n=        item list, newest first
-GET    /share/items/{item}           full item: metadata, ocr, comments, annotations
+GET    /share/items?since=&n=        {items: […], deleted: […]} — see below
+GET    /share/search?q=              item list, same FTS semantics as peer /search
+GET    /share/items/{item}           full item: metadata, ocr, comments
 GET    /share/items/{item}/thumb     pre-scaled JPEG
 GET    /share/items/{item}/file      original bytes (?alt=gif|thumb as above)
-POST   /share/items                  multipart: "meta" + "file" → share an item
-DELETE /share/items/{item}           author or operator only
-POST   /share/items/{item}/comments  {body} → comment
+POST   /share/items                  multipart: "meta" + "file" (+ "gif"/"thumb"
+                                     recording siblings) → the item + duplicate
+DELETE /share/items/{item}           author or operator only → tombstone
+POST   /share/items/{item}/comments  {body} → the created comment
 POST   /share/items/{item}/annotations {shapes:[…]} → annotation layer
+                                     (designed, not yet served — answers 404)
 POST   /share/join                   {invite, display_name} → {token, member_id}
 ```
 
+`GET /ping` on a share node is the ordinary handshake with
+`capabilities: ["share", "annotate"]` and `captures` = live item count.
+`GET /share` describes the share: `id` is assigned by the share on first
+serve and stable across restarts and renames, `members` is a count (the
+roster lives at `/share/members`), and `retention_days` is `0` for
+unlimited. Every share route except `POST /share/join` requires a member
+token and answers the ordinary `401 {"error": "missing or wrong token"}`
+without one.
+
 ### Item identity
 
-A share item id is assigned by the share and is stable for every member. It
-is not anyone's local row id. `sha256` remains the dedupe key: pushing a
-capture already present returns the existing item with `duplicate: true`.
+A share item id is assigned by the share (`"itm_"` + 10 url-safe characters)
+and is stable for every member. It is not anyone's local row id. `sha256`
+remains the dedupe key: pushing a capture already present returns the
+existing item with `duplicate: true`.
 
 ```json
 {
-  "item": "itm_7Kq2",
+  "item": "itm_7Kq2mZpXcV",
   "sha256": "A1B2…",
-  "shared_by": "mem_ben",
-  "shared_at": "2026-08-16T14:23:10Z",
-  "taken_at": "2026-08-16T14:22:03Z",
+  "shared_by": "mem_OZHhgF1g",
+  "shared_at": "2026-08-16T14:23:10.0000000+00:00",
+  "taken_at": "2026-08-16T14:22:03.4512345-05:00",
   "width": 2560, "height": 1440,
   "kind": "image",
+  "duration_ms": 0,
+  "has_gif": false,
+  "file_ext": ".png",
   "ocr_text": "…",
   "ocr_engine_version": "vision/3+25A354",
   "comment_count": 2,
-  "has_annotations": true
+  "latest_comment_at": "2026-08-17T09:40:33.0000000+00:00",
+  "has_annotations": false
 }
 ```
 
 Note what is **absent**: the sharer's machine name, their local row id, their
 archive path, their `origin` chain. Sharing a capture publishes the capture,
-not the shape of your archive.
+not the shape of your archive. Recordings carry `duration_ms` and `has_gif`
+so a client knows to fetch the `?alt=gif` sibling; `shared_at` is stamped by
+the share in UTC, `taken_at` round-trips as the sharer sent it.
+`latest_comment_at` is the newest comment's stamp, omitted while an item is
+uncommented — with `shared_at` it is the item's activity timestamp, the value
+a `?since=` cursor advances over.
+
+`file_ext` is the extension the share stored the bytes under (the sharer's
+`file_name` contributed it at post time) — an extension only, never a name
+or path, so clients that cache or pull an item can label the file honestly:
+a shared JPEG must not leave a client renamed `.png`. Absent from an older
+node's responses; clients then fall back to the kind's default extension.
+
+Item lists omit `ocr_text`; `GET /share/items/{item}` includes it plus the
+`comments` array. `POST /share/items` answers the **list** shape — no
+`ocr_text`, no `comments` — plus `duplicate`; a duplicate is a success,
+exactly as peer ingest. The meta part mirrors the ingest sidecar minus
+everything a share must not know:
+`{sha256, taken_at, width, height, kind, duration_ms, ocr_text,
+ocr_engine_version, file_name}` (file_name contributes only its extension,
+and only a short alphanumeric one — anything else falls back to the kind's
+default, `.png` / `.mp4`). Any other field a client smuggles in — a
+`shared_by`, an `origin` — is ignored. Dedupe is against **live** items only:
+re-sharing a capture whose item was deleted mints a fresh item id, and the
+old id stays tombstoned.
+
+### Listing, tombstones, and the since= poll
+
+`GET /share/items` answers an envelope, not a bare array:
+
+```json
+{
+  "items":   [ … newest first, n clamped 1–1000 (default 200) … ],
+  "deleted": [ {"item": "itm_iym3t8pXzT", "deleted_at": "2026-08-17T09:42:33Z"} ]
+}
+```
+
+Deletion — by a member, the operator, or retention — keeps the item id as a
+tombstone forever, so members can prune copies they pulled.
+`?since=<timestamp>` filters both lists to activity after that instant:
+items newly shared, items whose comments moved, and fresh tombstones. Pass a
+timestamp a previous response returned (`shared_at`, `latest_comment_at`, or
+`deleted_at`); this one query is what drives the tray's notification dot. A
+malformed since is `400 {"error": "bad since"}`.
+
+A since-filtered `items` list is ordered **oldest activity first** — the
+opposite of the plain listing — and when more than `n` items changed the
+envelope carries `"truncated": true` (omitted otherwise; tombstones are never
+truncated). The pairing makes the poll lossless: the client advances `since`
+to the newest timestamp it received and polls again, and everything held back
+still lies after that cursor. Newest-first truncation would silently drop
+exactly the old items a fresh comment resurfaced.
+
+### Search
+
+`GET /share/search?q=` matches the peer `/search` contract exactly: the same
+quoting rules everywhere (each whitespace-separated term quoted and
+prefix-matched, so user text can't hit FTS5 operator syntax), rank order,
+and an empty `q` returns the newest 200. Only live items are searched —
+tombstoned content leaves the index when it leaves the disk.
+
+### Comments
+
+`POST /share/items/{item}/comments {body}` appends — comments are never
+edited or individually deleted; they are destroyed only with their item —
+and answers the created comment; the same shape rides along on the
+single-item GET:
+
+```json
+{"id": 2, "member_id": "mem_5nhIDMhS", "display_name": "Bob",
+ "created_at": "2026-08-17T09:40:33.0000000+00:00",
+ "body": "@Alice is that total right?"}
+```
+
+Authorship comes from the token. `display_name` is resolved by the share
+(clients fall back to `member_id` should it ever be null), and `@name` is
+parsed against `/share/members` — no separate mention machinery. An empty
+body is `400 {"error": "empty comment"}`; a body over 4096 characters is
+`400 {"error": "comment too long"}` — comments live as long as their item
+and ride along on every detail fetch, so they stay note-sized.
+
+### Deletion and retention
+
+`DELETE /share/items/{item}` succeeds for the item's author or the operator
+(`200 {"item": "…", "deleted": true}`); any other member gets
+`403 {"error": "not your item"}`. Deletion destroys the content — the files,
+the capture row, and the item's comments, which routinely quote the capture
+and must not outlive it at rest — and keeps the tombstone. Retention (`retention_days`
+in `GET /share`; `0` = unlimited) does exactly the same on the node's own
+schedule. Deleting from a share never reaches into anyone's personal
+archive: pulled copies are theirs.
 
 ### Identity and tokens
 
@@ -262,8 +382,31 @@ the mesh's single `PeerToken`.
 
 `POST /share/join` redeems a single-use invite minted by the share operator
 and is the only share route that accepts a request without a member token.
+The body is `{invite, display_name}`; the display name falls back to the
+hint the operator minted the invite with, and when neither exists the answer
+is `400 {"error": "display_name required"}` — without consuming the invite.
+A name an existing member already goes by (compared case-insensitively) is
+`400 {"error": "display_name taken"}`, also without consuming the invite —
+display names are the only authorship humans read, so a second "Ben" would
+spoof the first in every `shared_by`, comment, and `@mention`. Invites
+expire after 24 hours. Spent, expired, and unknown invites are answered
+identically — `401 {"error": "bad invite"}` — so the route cannot be used
+to probe which codes exist.
+
+Servers store member tokens and invite codes only as SHA-256 hashes,
+compared in constant time; a raw token exists nowhere but the join response
+that minted it. (The no-logging rule above applies to invite codes too.)
+
+Invites travel as a URL: `esgee-share://<authority>#<code>`, where swapping
+the scheme for `http://` yields the share's base URL (tailnet endpoints are
+plain HTTP inside WireGuard). The authority is whatever the minting node
+knew at mint time — its tailnet IP and port — and the operator may rewrite
+it before sending if members reach the node another way.
 
 ### Annotations are a layer
+
+Designed, not yet served: the node answers 404 on the annotations route
+until the layer lands, and `has_annotations` stays `false`.
 
 An annotation is JSON in image coordinate space, stored beside the original
 and composited at display time:

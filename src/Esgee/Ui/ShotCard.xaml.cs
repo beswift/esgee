@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using Esgee.Interop;
+using Esgee.Shares;
 using Esgee.Store;
 
 namespace Esgee.Ui;
@@ -25,7 +26,8 @@ public partial class ShotCard : UserControl
 
     public Shot Shot => _shot;
 
-    public ShotCard(Shot shot, TimeSpan linger, Action<ShotCard> onGone, Action beforeClipboardWrite)
+    public ShotCard(Shot shot, TimeSpan linger, Action<ShotCard> onGone,
+        Action beforeClipboardWrite, SharePusher? sharePush = null)
     {
         InitializeComponent();
 
@@ -51,6 +53,14 @@ public partial class ShotCard : UserControl
         FolderBtn.Click += (_, _) => Reveal();
         PinBtn.Click    += (_, _) => TogglePin();
         CloseBtn.Click  += (_, _) => Leave();
+
+        // Share icon only exists once a share is configured — the default
+        // shelf renders exactly as it did before shares existed.
+        if (sharePush is { Any: true })
+        {
+            ShareBtn.Visibility = Visibility.Visible;
+            ShareBtn.Click += (_, _) => OnShareClick(sharePush);
+        }
 
         MouseEnter += (_, _) => { Fade(Chrome, 1, 120); _countdown?.Pause(this); };
         MouseLeave += (_, _) => { Fade(Chrome, 0, 160); if (!_pinned) _countdown?.Resume(this); };
@@ -198,6 +208,82 @@ public partial class ShotCard : UserControl
             PinBtn.Foreground = (System.Windows.Media.Brush)FindResource("Ink");
             StartCountdown(TimeSpan.FromSeconds(8));
         }
+    }
+
+    // ---- share -------------------------------------------------------------
+
+    /// <summary>One share: click pushes. Several: a tiny menu, last-used
+    /// first — one extra click, still level with Slack's paste-and-enter.</summary>
+    private void OnShareClick(SharePusher push)
+    {
+        var shares = push.Ordered();
+        if (shares.Count == 0)
+        {
+            // The icon was wired when a share existed, but the last one was
+            // removed from the tray while this card sat on the shelf. Retire
+            // the stale icon instead of flashing an empty menu.
+            ShareBtn.Visibility = Visibility.Collapsed;
+            Log.Info("shares: card share icon clicked after the last share was removed; hiding it");
+            return;
+        }
+        if (shares.Count == 1)
+        {
+            PushTo(push, shares[0]);
+            return;
+        }
+
+        var menu = new ContextMenu
+        {
+            PlacementTarget = ShareBtn,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Top,
+        };
+        foreach (var share in shares)
+        {
+            var pick = share;
+            var item = new MenuItem { Header = pick.Name };
+            item.Click += (_, _) => PushTo(push, pick);
+            menu.Items.Add(item);
+        }
+        // The pointer wanders into the popup, which counts as leaving the
+        // card — don't let the countdown yank the card out mid-choice.
+        menu.Opened += (_, _) => _countdown?.Pause(this);
+        menu.Closed += (_, _) => { if (!_pinned && !IsMouseOver) _countdown?.Resume(this); };
+        menu.IsOpen = true;
+    }
+
+    /// <summary>Fires the push and gets out of the way — the capture pipeline
+    /// and the card's own lifecycle never wait on a share (same rule as
+    /// SyncQueue). The badge reports the outcome if the card is still on the
+    /// shelf when it lands; the log always has it either way.</summary>
+    private void PushTo(SharePusher push, ShareEntry share)
+    {
+        ShareBadgeText.Text = $"→ {share.Name}…";
+        ShareBadge.ToolTip = null;
+        ShareBadge.Visibility = Visibility.Visible;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var item = await push.PushAsync(_shot, share);
+                await Dispatcher.BeginInvoke(() =>
+                {
+                    ShareBadgeText.Text = item.Duplicate == true
+                        ? $"✓ {share.Name} — already there"
+                        : $"✓ {share.Name}";
+                    FlashOnce();
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"share {share.Name}: push of shot {_shot.Id} failed: {ex.Message}");
+                await Dispatcher.BeginInvoke(() =>
+                {
+                    ShareBadgeText.Text = $"✕ {share.Name}";
+                    ShareBadge.ToolTip = $"Push failed: {ex.Message}";
+                });
+            }
+        });
     }
 
     // ---- animation ---------------------------------------------------------
