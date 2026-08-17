@@ -3,6 +3,11 @@ import SwiftUI
 import AVFoundation
 import ImageIO
 
+/// NSImage's Sendable conformance is explicitly unavailable, so decode
+/// results cross back from Task.detached in a box (same pattern as
+/// ShotCardView.ThumbBox — immutable in practice, moved not shared).
+private struct DecodedImage: @unchecked Sendable { let img: NSImage? }
+
 /// The payoff of the OCR index: type words that were on screen weeks ago, get
 /// the screenshot back, drag it straight out as a file.
 ///
@@ -517,9 +522,10 @@ final class ArchiveModel: ObservableObject {
             defer { self?.previewLoadsInFlight -= 1 }
             do {
                 let local = try await fetch.value
+                let path = local.path
                 let img = await Task.detached {
-                    ArchiveEntry.decodeImage(path: local.path, maxPixel: 8192)
-                }.value
+                    DecodedImage(img: ArchiveEntry.decodeImage(path: path, maxPixel: 8192))
+                }.value.img
                 guard let self, self.currentPreviewShotId == expected, let img else { return }
                 self.previewImage = img
             } catch {
@@ -794,7 +800,7 @@ final class ArchiveEntry: ObservableObject, Identifiable {
             Task { [weak self] in
                 do {
                     let data = try await client.thumb(id: dto.id)
-                    let img = await Task.detached { NSImage(data: data) }.value
+                    let img = await Task.detached { DecodedImage(img: NSImage(data: data)) }.value.img
                     if let self, let img { self.thumbnail = img }
                 } catch {
                     Log.warn("archive thumb failed for \(dto.fileName): \(error.localizedDescription)")
@@ -808,7 +814,9 @@ final class ArchiveEntry: ObservableObject, Identifiable {
         // stall would take the shelf and hotkeys down here too.
         let path = shot.thumbPath
         Task { [weak self] in
-            let img = await Task.detached { ArchiveEntry.decodeImage(path: path, maxPixel: 448) }.value
+            let img = await Task.detached {
+                DecodedImage(img: ArchiveEntry.decodeImage(path: path, maxPixel: 448))
+            }.value.img
             if let self {
                 if let img {
                     self.thumbnail = img

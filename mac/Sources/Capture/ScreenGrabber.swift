@@ -29,9 +29,21 @@ enum ScreenGrabber {
     /// archive) are excluded via the content filter — exclusion replaces the
     /// Windows hide/show dance outright: no compositor settle delay, no
     /// flicker, nothing to forget to re-show on an error path.
+    /// SCShareableContent is not Sendable on this SDK, so the async-throws
+    /// convenience can't deliver it into a @MainActor context — the callback
+    /// form plus a box crosses the boundary the same way ThumbBox does.
+    private struct ContentBox: @unchecked Sendable { let content: SCShareableContent }
+    private struct ImageBox: @unchecked Sendable { let image: CGImage }
+
     static func freezeAllDisplays() async throws -> [FrozenDisplay] {
-        let content = try await SCShareableContent.excludingDesktopWindows(
-            false, onScreenWindowsOnly: true)
+        let box: ContentBox = try await withCheckedThrowingContinuation { cont in
+            SCShareableContent.getExcludingDesktopWindows(
+                false, onScreenWindowsOnly: true) { content, error in
+                if let content { cont.resume(returning: ContentBox(content: content)) }
+                else { cont.resume(throwing: error ?? ScreenGrabError.renderFailed) }
+            }
+        }
+        let content = box.content
         let ourBundle = Bundle.main.bundleIdentifier
         let excluded = content.windows.filter {
             $0.owningApplication?.bundleIdentifier == ourBundle
@@ -59,9 +71,18 @@ enum ScreenGrabber {
             config.showsCursor = false
             config.captureResolution = .best
 
+            // Callback form again: SCContentFilter is as non-Sendable as the
+            // content it came from, so the async overload can't take it from
+            // the main actor.
             let filter = SCContentFilter(display: scDisplay, excludingWindows: excluded)
-            let image = try await SCScreenshotManager.captureImage(
-                contentFilter: filter, configuration: config)
+            let image = try await withCheckedThrowingContinuation {
+                (cont: CheckedContinuation<ImageBox, Error>) in
+                SCScreenshotManager.captureImage(
+                    contentFilter: filter, configuration: config) { image, error in
+                    if let image { cont.resume(returning: ImageBox(image: image)) }
+                    else { cont.resume(throwing: error ?? ScreenGrabError.renderFailed) }
+                }
+            }.image
 
             frozen.append(FrozenDisplay(displayID: displayID,
                                         framePoints: screen.frame,

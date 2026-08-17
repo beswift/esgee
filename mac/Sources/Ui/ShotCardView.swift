@@ -231,9 +231,14 @@ final class ShotCardView: NSView {
     /// fullscreen PNG takes long enough to drop the slide-in's frames.
     private func decodeThumbAsync() {
         let path = shot.thumbPath
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let box = Self.decodeThumb(path: path) else { return }
-            await MainActor.run { self?.applyThumb(box) }
+        // The outer Task inherits main-actor isolation, so capturing self is
+        // legal; only the Sendable path string enters the detached closure.
+        Task { [weak self] in
+            let box = await Task.detached(priority: .userInitiated) {
+                Self.decodeThumb(path: path)
+            }.value
+            guard let box, let self else { return }
+            self.applyThumb(box)
         }
     }
 
