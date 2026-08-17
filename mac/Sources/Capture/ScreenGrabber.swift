@@ -35,15 +35,39 @@ enum ScreenGrabber {
     private struct ContentBox: @unchecked Sendable { let content: SCShareableContent }
     private struct ImageBox: @unchecked Sendable { let image: CGImage }
 
-    static func freezeAllDisplays() async throws -> [FrozenDisplay] {
-        let box: ContentBox = try await withCheckedThrowingContinuation { cont in
+    /// The continuation closures live in nonisolated helpers on purpose: SCK
+    /// invokes its completion handlers on an XPC reply queue, and a closure
+    /// that inherited @MainActor isolation would trip the Swift 6 runtime
+    /// executor check there (dispatch_assert_queue_fail — found the hard way).
+    nonisolated private static func fetchShareableContent() async throws -> ContentBox {
+        try await withCheckedThrowingContinuation { cont in
             SCShareableContent.getExcludingDesktopWindows(
                 false, onScreenWindowsOnly: true) { content, error in
                 if let content { cont.resume(returning: ContentBox(content: content)) }
                 else { cont.resume(throwing: error ?? ScreenGrabError.renderFailed) }
             }
         }
-        let content = box.content
+    }
+
+    /// Filter and config ride INTO the nonisolated helper in the box for the
+    /// same reason the image rides out in one.
+    private struct CaptureRequest: @unchecked Sendable {
+        let filter: SCContentFilter
+        let config: SCStreamConfiguration
+    }
+
+    nonisolated private static func captureBoxed(_ req: CaptureRequest) async throws -> ImageBox {
+        try await withCheckedThrowingContinuation { cont in
+            SCScreenshotManager.captureImage(
+                contentFilter: req.filter, configuration: req.config) { image, error in
+                if let image { cont.resume(returning: ImageBox(image: image)) }
+                else { cont.resume(throwing: error ?? ScreenGrabError.renderFailed) }
+            }
+        }
+    }
+
+    static func freezeAllDisplays() async throws -> [FrozenDisplay] {
+        let content = try await fetchShareableContent().content
         let ourBundle = Bundle.main.bundleIdentifier
         let excluded = content.windows.filter {
             $0.owningApplication?.bundleIdentifier == ourBundle
@@ -71,18 +95,9 @@ enum ScreenGrabber {
             config.showsCursor = false
             config.captureResolution = .best
 
-            // Callback form again: SCContentFilter is as non-Sendable as the
-            // content it came from, so the async overload can't take it from
-            // the main actor.
             let filter = SCContentFilter(display: scDisplay, excludingWindows: excluded)
-            let image = try await withCheckedThrowingContinuation {
-                (cont: CheckedContinuation<ImageBox, Error>) in
-                SCScreenshotManager.captureImage(
-                    contentFilter: filter, configuration: config) { image, error in
-                    if let image { cont.resume(returning: ImageBox(image: image)) }
-                    else { cont.resume(throwing: error ?? ScreenGrabError.renderFailed) }
-                }
-            }.image
+            let image = try await captureBoxed(
+                CaptureRequest(filter: filter, config: config)).image
 
             frozen.append(FrozenDisplay(displayID: displayID,
                                         framePoints: screen.frame,

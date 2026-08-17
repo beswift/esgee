@@ -68,6 +68,14 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         # Menu-bar app: no Dock tile, no app switcher entry.
         LSUIElement: true
+        # macOS 15+ gates app-initiated connections to local/private
+        # addresses (the tailnet's 100.64/10 range included) behind the
+        # Local Network permission. Without this string the deny is
+        # SILENT — every cross-host peer connection just times out while
+        # same-host and curl work fine. Cost a debugging session to find.
+        NSLocalNetworkUsageDescription: >-
+          esgee connects to your other machines over your private tailnet
+          to browse, sync, and pair their screenshot archives.
         LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
         NSPrincipalClass: NSApplication
         NSHumanReadableCopyright: "esgee"

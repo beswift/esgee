@@ -34,11 +34,15 @@ final class MenuBarController: NSObject, @preconcurrency NSMenuDelegate {
     private var lastPeerCount = -1
     private var lastPeerCountAt = Date.distantPast
 
-    /// Sparkle 2, the documented wiring. Automatic checks obey
-    /// SUEnableAutomaticChecks from Info.plist; local ad-hoc builds (empty
-    /// SUPublicEDKey, v0.0.0) just fail the check with a log line — the same
-    /// worthlessness as a source-built Windows copy, reached the same way.
-    private let updater = SPUStandardUpdaterController(startingUpdater: true,
+    /// Sparkle 2, the documented wiring — but only STARTED when the build
+    /// carries a signing key (CI injects SUPublicEDKey; local builds have
+    /// none). Starting the updater keyless doesn't just log — it puts an
+    /// "can't check for updates" alert in the user's face at launch. Same
+    /// policy as Windows: "update checks off: not a managed install".
+    private static var hasUpdateFeed: Bool {
+        (Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String)?.isEmpty == false
+    }
+    private let updater = SPUStandardUpdaterController(startingUpdater: hasUpdateFeed,
                                                        updaterDelegate: nil,
                                                        userDriverDelegate: nil)
 
@@ -108,10 +112,14 @@ final class MenuBarController: NSObject, @preconcurrency NSMenuDelegate {
 
         addAction("Edit settings", #selector(doEditSettings))
 
+        // Dev builds show the version but can't check — a nil action renders
+        // the row disabled, mirroring the Windows "not a managed install" line.
         let update = NSMenuItem(title: "Check for updates  (v\(AppInfo.version))",
-                                action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+                                action: Self.hasUpdateFeed
+                                    ? #selector(SPUStandardUpdaterController.checkForUpdates(_:))
+                                    : nil,
                                 keyEquivalent: "")
-        update.target = updater
+        update.target = Self.hasUpdateFeed ? updater : nil
         menu.addItem(update)
         menu.addItem(.separator())
 
