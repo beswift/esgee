@@ -606,7 +606,15 @@ public partial class ArchiveWindow : Window
             Margin = new Thickness(2, 5, 2, 1),
         };
 
-        var panel = new StackPanel { Children = { thumb, caption } };
+        // Transparent (not null): a null-background panel only hit-tests over
+        // its children, so clicks and drags in the letterbox around a short
+        // wide thumbnail — or between thumb and caption — silently miss the
+        // tile while the card chrome still lights up on hover.
+        var panel = new StackPanel
+        {
+            Background = System.Windows.Media.Brushes.Transparent,
+            Children = { thumb, caption },
+        };
 
         panel.ToolTip = entry switch
         {
