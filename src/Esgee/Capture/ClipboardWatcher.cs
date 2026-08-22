@@ -14,10 +14,12 @@ namespace Esgee.Capture;
 /// </summary>
 public sealed class ClipboardWatcher : IDisposable
 {
+    private const int KnownHashCapacity = 64;
+
     private readonly HwndSource _sink;
     private DateTimeOffset _ignoreUntil = DateTimeOffset.MinValue;
-    private string? _lastHash;
-    private DateTimeOffset _lastAt = DateTimeOffset.MinValue;
+    private readonly HashSet<string> _knownHashes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Queue<string> _knownOrder = new();
 
     /// <summary>Raised on the UI thread with an unencoded capture.</summary>
     public event Action<CapturedImage>? Captured;
@@ -45,6 +47,22 @@ public sealed class ClipboardWatcher : IDisposable
     /// </summary>
     public void IgnoreNextChange() => _ignoreUntil = DateTimeOffset.Now.AddMilliseconds(750);
 
+    /// <summary>
+    /// Call with the SHA-256 (hex) of PNG bytes esgee has already archived or
+    /// put on the clipboard itself. Unlike the time-window guard, this never
+    /// expires: dictation tools (Wispr Flow) and clipboard managers save the
+    /// clipboard, paste their own text, then RESTORE the saved contents
+    /// minutes later — the restore re-publishes our image without the private
+    /// marker format, and only content identity can recognize it. Both this
+    /// and WndProc run on the UI thread, so the collections need no locking.
+    /// </summary>
+    public void NoteKnownContent(string sha256)
+    {
+        if (string.IsNullOrEmpty(sha256) || !_knownHashes.Add(sha256)) return;
+        _knownOrder.Enqueue(sha256);
+        while (_knownOrder.Count > KnownHashCapacity) _knownHashes.Remove(_knownOrder.Dequeue());
+    }
+
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr w, IntPtr l, ref bool handled)
     {
         if (msg != Win32.WM_CLIPBOARDUPDATE) return IntPtr.Zero;
@@ -65,17 +83,21 @@ public sealed class ClipboardWatcher : IDisposable
         var capture = Read();
         if (capture is null) return;
 
-        // A single capture can raise WM_CLIPBOARDUPDATE more than once as the
-        // source app publishes each format. Collapse those by content.
         var hash = Hash(capture);
-        var now = DateTimeOffset.Now;
-        if (hash == _lastHash && now - _lastAt < TimeSpan.FromSeconds(3))
+
+        // Content esgee already knows, coming back without the marker: a
+        // clipboard save/restore cycle by another app (dictation tools do this
+        // on every insertion). Not a capture, no matter how much later it is.
+        // This also collapses the multiple WM_CLIPBOARDUPDATEs a single copy
+        // raises as the source app publishes each format, which a 3-second
+        // same-hash window used to handle.
+        if (_knownHashes.Contains(hash))
         {
+            Log.Info("clipboard: ignoring image esgee already captured (re-published or echoed)");
             capture.Dispose();
             return;
         }
-        _lastHash = hash;
-        _lastAt = now;
+        NoteKnownContent(hash);
 
         Captured?.Invoke(capture);
     }

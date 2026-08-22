@@ -20,6 +20,7 @@ public partial class App : Application
     private ShotStore _store = null!;
     private ShelfWindow _shelf = null!;
     private ClipboardWatcher _watcher = null!;
+    private Interop.ClipboardService _clipboard = null!;
     private OcrIndexer? _ocr;
     private HotkeyManager? _hotkey;
     private CaptureController? _capture;
@@ -93,7 +94,8 @@ public partial class App : Application
         {
             ShutdownMode = ShutdownMode.OnLastWindowClose;
             _store = new ShotStore(_settings.ArchiveRoot);
-            new ArchiveWindow(_store, () => { }, _settings).Show();
+            _clipboard = new Interop.ClipboardService(Dispatcher);
+            new ArchiveWindow(_store, _clipboard, _settings).Show();
             return;
         }
 
@@ -123,8 +125,17 @@ public partial class App : Application
 
         _store = new ShotStore(_settings.ArchiveRoot);
         _watcher = new ClipboardWatcher();
+        _clipboard = new Interop.ClipboardService(
+            Dispatcher, _watcher.IgnoreNextChange, _watcher.NoteKnownContent);
+
+        // Seed with recent shots: the clipboard survives a restart, so an image
+        // a previous esgee instance wrote can come back (via a dictation tool's
+        // clipboard save/restore) after the in-memory hash set is gone.
+        // Recent() is newest-first; reversed so eviction discards oldest first.
+        foreach (var recent in Enumerable.Reverse(_store.Recent(limit: 16)))
+            if (!recent.IsVideo) _watcher.NoteKnownContent(recent.Sha256);
         _sharePush = new SharePusher(_store, _settings);
-        _shelf = new ShelfWindow(() => _watcher.IgnoreNextChange())
+        _shelf = new ShelfWindow(_clipboard)
         {
             Linger = TimeSpan.FromSeconds(_settings.LingerSeconds),
             MaxCards = _settings.MaxCards,
@@ -260,6 +271,9 @@ public partial class App : Application
 
     private async void OnCaptured(CapturedImage capture, bool toClipboard)
     {
+        // Reserve before encoding/storage so a slow older capture can never
+        // overwrite a newer user clipboard intent after completing late.
+        var clipboardIntent = toClipboard ? _clipboard.ReserveIntent() : default;
         try
         {
             // Encoding and hashing an ultrawide grab is tens of milliseconds;
@@ -278,8 +292,7 @@ public partial class App : Application
             {
                 // The full multi-format object, so a paste target gets its pick
                 // of file / PNG / bitmap — same payload as a drag.
-                _watcher.IgnoreNextChange();
-                Clipboard.SetDataObject(Interop.DragSource.BuildDataObject(shot), copy: true);
+                await _clipboard.CopyShotAsync(shot, "capture", clipboardIntent);
             }
 
             Log.Info($"captured {shot.Width}x{shot.Height} -> {shot.Path}");
@@ -299,6 +312,7 @@ public partial class App : Application
     /// there's no still text to read.</summary>
     private async void OnRecorded(RecordingResult rec)
     {
+        var clipboardIntent = _clipboard.ReserveIntent();
         try
         {
             var shot = await Task.Run(() => _store.AddFile(
@@ -309,8 +323,7 @@ public partial class App : Application
 
             // CF_HDROP with the GIF when there is one (the paste-anywhere pick),
             // else the MP4 — same choice DragSource makes for drag-out.
-            _watcher.IgnoreNextChange();
-            Clipboard.SetDataObject(Interop.DragSource.BuildDataObject(shot), copy: true);
+            await _clipboard.CopyShotAsync(shot, "recording", clipboardIntent);
 
             Log.Info($"recorded {shot.Width}x{shot.Height} {shot.DurationText} -> {shot.Path} (id {shot.Id})");
         }
@@ -328,7 +341,7 @@ public partial class App : Application
             return;
         }
 
-        _archive = new ArchiveWindow(_store, () => _watcher.IgnoreNextChange(), _settings);
+        _archive = new ArchiveWindow(_store, _clipboard, _settings);
         _archive.Show();
     }
 

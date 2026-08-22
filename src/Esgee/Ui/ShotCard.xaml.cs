@@ -16,24 +16,27 @@ public partial class ShotCard : UserControl
 
     private readonly Shot _shot;
     private readonly Action<ShotCard> _onGone;
-    private readonly Action _beforeClipboardWrite;
+    private readonly ClipboardService _clipboard;
 
     private Storyboard? _countdown;
     private Point _pressAt;
     private bool _pressed;
     private bool _pinned;
     private bool _leaving;
+    private bool _dragPreparingOrActive;
+    private long _dragAttempt;
 
     public Shot Shot => _shot;
+    public bool IsLeaving => _leaving;
 
     public ShotCard(Shot shot, TimeSpan linger, Action<ShotCard> onGone,
-        Action beforeClipboardWrite, SharePusher? sharePush = null)
+        ClipboardService clipboard, SharePusher? sharePush = null)
     {
         InitializeComponent();
 
         _shot = shot;
         _onGone = onGone;
-        _beforeClipboardWrite = beforeClipboardWrite;
+        _clipboard = clipboard;
 
         // Decode off the UI thread so the card's slide-in never stutters — an
         // ultrawide fullscreen PNG takes long enough to drop animation frames.
@@ -63,7 +66,7 @@ public partial class ShotCard : UserControl
         }
 
         MouseEnter += (_, _) => { Fade(Chrome, 1, 120); _countdown?.Pause(this); };
-        MouseLeave += (_, _) => { Fade(Chrome, 0, 160); if (!_pinned) _countdown?.Resume(this); };
+        MouseLeave += (_, _) => { Fade(Chrome, 0, 160); ResumeCountdownIfEligible(); };
 
         PreviewMouseLeftButtonDown += OnPress;
         PreviewMouseLeftButtonUp   += OnRelease;
@@ -104,8 +107,10 @@ public partial class ShotCard : UserControl
     {
         // Let the hover toolbar handle its own clicks.
         if (e.OriginalSource is DependencyObject d && IsChrome(d)) return;
+        _dragAttempt++;
         _pressed = true;
         _pressAt = e.GetPosition(this);
+        CaptureMouse(); // guarantees release cancels preparation even off-card
     }
 
     private void OnMove(object sender, MouseEventArgs e)
@@ -118,15 +123,23 @@ public partial class ShotCard : UserControl
             return;
 
         _pressed = false;
-        BeginDragOut();
+        _dragPreparingOrActive = true;
+        BeginDragOut(_dragAttempt);
     }
 
     private void OnRelease(object sender, MouseButtonEventArgs e)
     {
-        if (!_pressed) return;
-        if (e.OriginalSource is DependencyObject d && IsChrome(d)) return;
+        var wasClick = _pressed;
+        if (!wasClick && !_dragPreparingOrActive && !IsMouseCaptured) return;
+
         _pressed = false;
-        Copy(); // A plain click means "put it back on the clipboard".
+        _dragPreparingOrActive = false;
+        _dragAttempt++; // invalidate any preparation belonging to this press
+        if (IsMouseCaptured) ReleaseMouseCapture();
+        ResumeCountdownIfEligible();
+
+        if (wasClick)
+            Copy(); // A plain click means "put it back on the clipboard".
     }
 
     private static bool IsChrome(DependencyObject d)
@@ -141,14 +154,29 @@ public partial class ShotCard : UserControl
             ? System.Windows.Media.VisualTreeHelper.GetParent(d)
             : null;
 
-    private void BeginDragOut()
+    private async void BeginDragOut(long attempt)
     {
         // DoDragDrop pumps its own modal loop; the countdown must not expire
         // and yank the card out from under an in-flight drag.
         _countdown?.Pause(this);
         try
         {
-            var data = DragSource.BuildDataObject(_shot);
+            var prepare = System.Diagnostics.Stopwatch.StartNew();
+            var transfer = await DragSource.PrepareAsync(_shot);
+            prepare.Stop();
+
+            // Preparation no longer monopolizes input. If the user released
+            // while it ran, do not begin a modal drag with no button held.
+            if (attempt != _dragAttempt || !_dragPreparingOrActive || !IsMouseCaptured ||
+                _leaving || !IsLoaded || Mouse.LeftButton != MouseButtonState.Pressed)
+            {
+                Log.Info($"drag-out: shot {_shot.Id} ready after release " +
+                         $"({prepare.ElapsedMilliseconds} ms); cancelled");
+                return;
+            }
+
+            var data = DragSource.BuildDataObject(transfer);
+            if (IsMouseCaptured) ReleaseMouseCapture();
             var effect = DragDrop.DoDragDrop(this, data, DragDropEffects.Copy);
 
             // Dropped somewhere real — its job is done, get it off the shelf.
@@ -158,19 +186,26 @@ public partial class ShotCard : UserControl
         {
             Log.Error($"drag-out failed: {ex.Message}");
         }
-
-        if (!_pinned) _countdown?.Resume(this);
+        finally
+        {
+            // An older continuation must never clear the state of a newer
+            // press. Mouse-up already clears state when it invalidates us.
+            if (attempt == _dragAttempt)
+            {
+                _dragPreparingOrActive = false;
+                if (IsMouseCaptured) ReleaseMouseCapture();
+                ResumeCountdownIfEligible();
+            }
+        }
     }
 
     // ---- actions -----------------------------------------------------------
 
-    private void Copy()
+    private async void Copy()
     {
         try
         {
-            _beforeClipboardWrite(); // suppress our own clipboard echo
-            Clipboard.SetDataObject(DragSource.BuildDataObject(_shot), copy: true);
-            FlashOnce();
+            if (await _clipboard.CopyShotAsync(_shot, "shelf")) FlashOnce();
         }
         catch (Exception ex)
         {
@@ -247,7 +282,7 @@ public partial class ShotCard : UserControl
         // The pointer wanders into the popup, which counts as leaving the
         // card — don't let the countdown yank the card out mid-choice.
         menu.Opened += (_, _) => _countdown?.Pause(this);
-        menu.Closed += (_, _) => { if (!_pinned && !IsMouseOver) _countdown?.Resume(this); };
+        menu.Closed += (_, _) => ResumeCountdownIfEligible();
         menu.IsOpen = true;
     }
 
@@ -333,6 +368,10 @@ public partial class ShotCard : UserControl
     {
         if (_leaving) return;
         _leaving = true;
+        _pressed = false;
+        _dragPreparingOrActive = false;
+        _dragAttempt++;
+        if (IsMouseCaptured) ReleaseMouseCapture();
 
         _countdown?.Stop(this);
         Height = ActualHeight;
@@ -347,6 +386,12 @@ public partial class ShotCard : UserControl
         var collapse = new DoubleAnimation(ActualHeight, 0, dur) { EasingFunction = ease };
         collapse.Completed += (_, _) => _onGone(this);
         BeginAnimation(HeightProperty, collapse);
+    }
+
+    private void ResumeCountdownIfEligible()
+    {
+        if (!_pinned && !_leaving && !_dragPreparingOrActive && !IsMouseOver)
+            _countdown?.Resume(this);
     }
 
     private static void Fade(UIElement el, double to, int ms)

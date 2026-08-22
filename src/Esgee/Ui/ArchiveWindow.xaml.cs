@@ -27,11 +27,14 @@ public partial class ArchiveWindow : Window
 
     private readonly ShotStore _store;
     private readonly Settings _settings;
-    private readonly Action _beforeClipboardWrite;
+    private readonly ClipboardService _clipboard;
     private readonly DispatcherTimer _debounce;
     private readonly DispatcherTimer _livePoll;
+    private readonly SemaphoreSlim _thumbGate = new(initialCount: 4);
     private string _lastToken = "";
     private bool _dragging;
+    private long _dragAttempt;
+    private bool _rebuildingSwitcher;
 
     // Non-null while browsing a peer instead of the local store.
     private PeerClient? _remote;
@@ -43,13 +46,13 @@ public partial class ArchiveWindow : Window
     private Dictionary<string, string>? _shareMembers; // member_id -> display name
     private readonly SharePusher _sharePush;
 
-    public ArchiveWindow(ShotStore store, Action beforeClipboardWrite, Settings settings)
+    public ArchiveWindow(ShotStore store, ClipboardService clipboard, Settings settings)
     {
         InitializeComponent();
 
         _store = store;
         _settings = settings;
-        _beforeClipboardWrite = beforeClipboardWrite;
+        _clipboard = clipboard;
         _sharePush = new SharePusher(store, settings);
 
         // Every window announces its provenance. When a stale window from an
@@ -134,8 +137,24 @@ public partial class ArchiveWindow : Window
             }
         };
 
-        Loaded += (_, _) => { Refresh(); SearchBox.Focus(); RefreshMachineSwitcher(); };
-        Closed += (_, _) => { _livePoll.Stop(); _debounce.Stop(); _remote?.Dispose(); _share?.Dispose(); };
+        Loaded += (_, _) =>
+        {
+            SearchBox.Focus();
+            RefreshMachineSwitcher();
+            // Selecting "This PC" raises OnMachineChanged and refreshes. With
+            // no switcher (or if selection did not change), do the one initial
+            // refresh here. Never launch two 200-thumbnail generations.
+            if (_generation == 0) Refresh();
+        };
+        Closed += (_, _) =>
+        {
+            _dragAttempt++;
+            _dragging = false;
+            _livePoll.Stop();
+            _debounce.Stop();
+            _remote?.Dispose();
+            _share?.Dispose();
+        };
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -179,11 +198,14 @@ public partial class ArchiveWindow : Window
         var knownPeers = MachineBox.Items.OfType<PeerChoice>().ToList();
         var selected = MachineBox.SelectedItem;
 
+        _rebuildingSwitcher = true;
         MachineBox.Items.Clear();
 
         if (string.IsNullOrEmpty(_settings.PeerToken) && _settings.Shares.Length == 0)
         {
             MachineBox.Visibility = Visibility.Collapsed;
+            _rebuildingSwitcher = false;
+            ApplyMachineSelection();
             return;
         }
 
@@ -211,6 +233,9 @@ public partial class ArchiveWindow : Window
                 PeerChoice peer when knownPeers.Contains(peer) => (object)peer,
                 _ => null,
             }) ?? MachineBox.Items[0];
+
+        _rebuildingSwitcher = false;
+        ApplyMachineSelection();
 
         // Discovery once per set of known peers: the first build probes, a
         // settings-change rebuild reuses what the probe found.
@@ -280,8 +305,12 @@ public partial class ArchiveWindow : Window
 
     private void OnMachineChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!IsLoaded) return;
+        if (!IsLoaded || _rebuildingSwitcher) return;
+        ApplyMachineSelection();
+    }
 
+    private void ApplyMachineSelection()
+    {
         var oldRemote = _remote;
         var oldShare = _share;
         _remote = MachineBox.SelectedItem is PeerChoice choice
@@ -524,8 +553,10 @@ public partial class ArchiveWindow : Window
         // Remote tiles fetch the peer's pre-scaled JPEG instead of a local file.
         _ = Task.Run(async () =>
         {
+            await _thumbGate.WaitAsync();
             try
             {
+                if (gen != _generation) return;
                 var bmp = entry switch
                 {
                     { IsShare: true, Share: { } sc, ShareItem: { } si }
@@ -535,14 +566,18 @@ public partial class ArchiveWindow : Window
                     _ => DecodeFile(shot.ThumbPath, decodeWidth: 448),
                 };
 
-                await Dispatcher.BeginInvoke(() =>
+                await Dispatcher.InvokeAsync(() =>
                 {
                     if (gen == _generation) thumb.Source = bmp;
-                });
+                }, DispatcherPriority.Background);
             }
             catch (Exception ex)
             {
                 Log.Warn($"archive thumb failed for {shot.ThumbPath}: {ex.Message}");
+            }
+            finally
+            {
+                _thumbGate.Release();
             }
         });
 
@@ -585,17 +620,20 @@ public partial class ArchiveWindow : Window
 
         Point pressAt = default;
         var pressed = false;
+        long pressAttempt = 0;
 
         panel.PreviewMouseLeftButtonDown += (_, e) =>
         {
+            pressAttempt = ++_dragAttempt;
             pressed = true;
             pressAt = e.GetPosition(panel);
+            panel.CaptureMouse(); // mouse-up cancels even while preparation awaits
             // Browsed (peer or share): start the download NOW, so by the time
             // a drag crosses the threshold (or a preview opens) the file is
             // usually already local.
             if (entry.IsRemote || entry.IsShare) _ = entry.MaterializeAsync();
         };
-        panel.PreviewMouseMove += (_, e) =>
+        panel.PreviewMouseMove += async (_, e) =>
         {
             if (!pressed || e.LeftButton != MouseButtonState.Pressed) return;
             var p = e.GetPosition(panel);
@@ -604,21 +642,40 @@ public partial class ArchiveWindow : Window
                 return;
 
             pressed = false;
+            var attempt = pressAttempt;
             // DoDragDrop pumps messages, so the live-poll timer CAN fire inside
             // it — a mid-drag refresh would tear the tile out from under the
             // drag. The flag makes the poll sit out until the drop completes.
             _dragging = true;
             try
             {
-                // Local: completes synchronously. Remote: usually already done
-                // (mouse-down prefetch); a cold drag blocks here while the file
-                // downloads — slower, but the drop still lands a real file.
-                var local = entry.MaterializeAsync().GetAwaiter().GetResult();
+                // Materialization and full payload preparation stay off the
+                // dispatcher. A cold remote/share drag can take a while, but
+                // the window remains interactive and no modal drag starts after
+                // the user has released the button.
+                var materialize = Stopwatch.StartNew();
+                var local = await entry.MaterializeAsync();
+                materialize.Stop();
+                var prepare = Stopwatch.StartNew();
+                var transfer = await DragSource.PrepareAsync(local);
+                prepare.Stop();
+
+                if (attempt != _dragAttempt || !panel.IsMouseCaptured ||
+                    gen != _generation || !panel.IsLoaded) return;
+                if (Mouse.LeftButton != MouseButtonState.Pressed)
+                {
+                    Log.Info($"archive: drag ready after release (materialize " +
+                             $"{materialize.ElapsedMilliseconds} ms, prepare " +
+                             $"{prepare.ElapsedMilliseconds} ms)");
+                    FlashTitle("ready — drag again");
+                    return;
+                }
                 if (entry.IsRemote)
                     Log.Info($"archive: dragging remote shot {local.Id} via cache {local.Path}");
                 else if (entry is { IsShare: true, ShareItem: { } dragged })
                     Log.Info($"archive: dragging share item {dragged.Item} via cache {local.Path}");
-                DragDrop.DoDragDrop(panel, DragSource.BuildDataObject(local), DragDropEffects.Copy);
+                if (panel.IsMouseCaptured) panel.ReleaseMouseCapture();
+                DragDrop.DoDragDrop(panel, DragSource.BuildDataObject(transfer), DragDropEffects.Copy);
             }
             catch (Exception ex)
             {
@@ -626,14 +683,26 @@ public partial class ArchiveWindow : Window
             }
             finally
             {
-                _dragging = false;
+                // A stale continuation must not clear a newer gesture's guard.
+                if (attempt == _dragAttempt)
+                {
+                    _dragging = false;
+                    if (panel.IsMouseCaptured) panel.ReleaseMouseCapture();
+                }
             }
         };
         panel.PreviewMouseLeftButtonUp += (_, _) =>
         {
             // A press that never crossed the drag threshold is a click: preview.
-            if (pressed) OpenPreview(entry);
+            var open = pressed && pressAttempt == _dragAttempt;
             pressed = false;
+            if (pressAttempt == _dragAttempt)
+            {
+                _dragAttempt++;
+                _dragging = false;
+            }
+            if (panel.IsMouseCaptured) panel.ReleaseMouseCapture();
+            if (open) OpenPreview(entry);
         };
 
         var menu = new ContextMenu();
@@ -1008,15 +1077,14 @@ public partial class ArchiveWindow : Window
         });
     }
 
-    private void OnOcrCopyAll(object sender, RoutedEventArgs e)
+    private async void OnOcrCopyAll(object sender, RoutedEventArgs e)
     {
         // The selectable box also holds status messages; only real text copies.
         if (_ocrRealText is null) { FlashTitle("no text to copy"); return; }
         try
         {
-            _beforeClipboardWrite();
-            Clipboard.SetText(_ocrRealText);
-            FlashTitle("screen text copied");
+            if (await _clipboard.CopyTextAsync(_ocrRealText, "archive OCR"))
+                FlashTitle("screen text copied");
         }
         catch (Exception ex)
         {
@@ -1029,15 +1097,15 @@ public partial class ArchiveWindow : Window
     /// the fast path for handing a screenshot's text to whatever needs it.</summary>
     private async void CopyOcrText(Entry entry)
     {
+        var clipboardIntent = _clipboard.ReserveIntent();
         var (done, text, problem) = await FetchOcrAsync(entry);
         if (problem is not null) { FlashTitle(problem); return; }
         if (!done) { FlashTitle("no text yet — OCR still catching up"); return; }
         if (string.IsNullOrWhiteSpace(text)) { FlashTitle("no text in this capture"); return; }
         try
         {
-            _beforeClipboardWrite();
-            Clipboard.SetText(text);
-            FlashTitle("screen text copied");
+            if (await _clipboard.CopyTextAsync(text, "archive tile OCR", clipboardIntent))
+                FlashTitle("screen text copied");
         }
         catch (Exception ex)
         {
@@ -1109,13 +1177,15 @@ public partial class ArchiveWindow : Window
 
     private async void Copy(Entry entry)
     {
+        // The click is the intent boundary; a slow remote materialization must
+        // not overwrite a newer clipboard action when it eventually finishes.
+        var clipboardIntent = _clipboard.ReserveIntent();
         try
         {
             // Remote: download first (off the UI thread); the clipboard write
             // itself must happen back here on the STA.
             var local = await entry.MaterializeAsync();
-            _beforeClipboardWrite();
-            Clipboard.SetDataObject(DragSource.BuildDataObject(local), copy: true);
+            await _clipboard.CopyShotAsync(local, "archive", clipboardIntent);
         }
         catch (Exception ex)
         {

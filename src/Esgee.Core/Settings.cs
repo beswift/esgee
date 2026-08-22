@@ -189,6 +189,9 @@ public sealed class Settings
         // to its default, never throw. A throw here lands in Load()'s catch,
         // which treats the file as unreadable.
         ArchiveRoot = string.IsNullOrWhiteSpace(ArchiveRoot) ? DefaultArchiveRoot() : ArchiveRoot;
+        // A hand-edited zero/negative capacity used to make ShelfWindow.Push
+        // enter its eviction path forever. The UI also clamps defensively.
+        MaxCards = Math.Max(1, MaxCards);
         PeerToken ??= "";
         SyncTargetPeer ??= "";
         DefaultShare ??= "";

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Media.Imaging;
 using Esgee.Store;
 
 namespace Esgee.Interop;
@@ -11,6 +12,13 @@ namespace Esgee.Interop;
 /// </summary>
 public static class DragSource
 {
+    /// <summary>
+    /// Immutable, cross-thread-safe input to the tiny STA-only DataObject build.
+    /// File I/O and WIC decode happen before this exists; the bitmap is frozen so
+    /// callers may prepare on a worker and consume on the dispatcher.
+    /// </summary>
+    public sealed record PreparedTransfer(Shot Shot, string DropPath, byte[]? Png, BitmapSource? Bitmap);
+
     /// <summary>Private clipboard format stamped on every DataObject esgee
     /// writes. The clipboard watcher skips content carrying it — the only
     /// self-echo signal that works ACROSS processes: a standalone
@@ -21,54 +29,67 @@ public static class DragSource
     public const string ClipboardMarker = "esgee.internal";
 
     /// <summary>
-    /// Offers the shot in three formats at once so any drop target is satisfied:
-    /// Explorer and file pickers take CF_HDROP, image-native apps take the PNG
-    /// stream, and older editors fall back to a bitmap.
+    /// Compatibility entry point for CLI diagnostics. Interactive UI paths use
+    /// PrepareAsync so this file read and decode never occupy the dispatcher.
     /// </summary>
     public static DataObject BuildDataObject(Shot shot)
+        => BuildDataObject(Prepare(shot));
+
+    /// <summary>Reads and decodes away from the dispatcher. Videos deliberately
+    /// remain file-drop-only, exactly as before.</summary>
+    public static Task<PreparedTransfer> PrepareAsync(Shot shot,
+        CancellationToken cancellationToken = default)
+        => Task.Run(() => Prepare(shot, cancellationToken), cancellationToken);
+
+    public static PreparedTransfer Prepare(Shot shot,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (shot.IsVideo)
+            return new PreparedTransfer(shot, shot.GifPath ?? shot.Path, null, null);
+
+        var png = File.ReadAllBytes(shot.Path);
+        cancellationToken.ThrowIfCancellationRequested();
+        BitmapSource? bitmap = null;
+        try { bitmap = LoadFrozen(png); }
+        catch (Exception ex) { Log.Warn($"bitmap format unavailable for drag: {ex.Message}"); }
+        cancellationToken.ThrowIfCancellationRequested();
+        return new PreparedTransfer(shot, shot.Path, png, bitmap);
+    }
+
+    /// <summary>Builds the multi-format OLE object without file I/O or decode.
+    /// Call on the UI STA for drag/drop or immediately before a clipboard write.</summary>
+    public static DataObject BuildDataObject(PreparedTransfer transfer)
     {
         var data = new DataObject();
         data.SetData(ClipboardMarker, "1"); // drop targets ignore private formats
 
         // Recordings: CF_HDROP with the GIF when one exists — that's the thing
-        // you paste into a chat — else the MP4. (The MP4 is always reachable via
-        // the card's folder button; both files sit side by side.) No PNG/bitmap
-        // formats: offering a still frame would make image-first paste targets
-        // silently take a frame instead of the clip.
-        if (shot.IsVideo)
+        // you paste into a chat — else the MP4. No PNG/bitmap formats: offering
+        // a still frame makes image-first targets silently take the frame.
+        if (transfer.Shot.IsVideo)
         {
-            data.SetData(DataFormats.FileDrop, new[] { shot.GifPath ?? shot.Path });
+            data.SetData(DataFormats.FileDrop, new[] { transfer.DropPath });
             return data;
         }
 
-        // CF_HDROP. Cheap because the file is already on disk — Microsoft warns
-        // that rendering data during the drag loop stalls the cursor, so we
-        // never do work here.
-        data.SetData(DataFormats.FileDrop, new[] { shot.Path });
-
-        // Preferred by chat clients, editors, and browsers.
-        data.SetData("PNG", new MemoryStream(File.ReadAllBytes(shot.Path)));
+        data.SetData(DataFormats.FileDrop, new[] { transfer.DropPath });
+        data.SetData("PNG", new MemoryStream(transfer.Png!));
 
         // Last-resort format for apps that only understand CF_DIB.
-        try
-        {
-            data.SetImage(LoadFrozen(shot.Path));
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"bitmap format unavailable for drag: {ex.Message}");
-        }
+        if (transfer.Bitmap is not null) data.SetImage(transfer.Bitmap);
 
         return data;
     }
 
-    private static System.Windows.Media.Imaging.BitmapSource LoadFrozen(string path)
+    private static BitmapSource LoadFrozen(byte[] png)
     {
-        var bmp = new System.Windows.Media.Imaging.BitmapImage();
+        using var stream = new MemoryStream(png, writable: false);
+        var bmp = new BitmapImage();
         bmp.BeginInit();
-        bmp.UriSource = new Uri(path);
-        // OnLoad so we don't hold a lock on a file the user may move or delete.
-        bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+        bmp.StreamSource = stream;
+        // OnLoad so neither the byte stream nor the source file stays live.
+        bmp.CacheOption = BitmapCacheOption.OnLoad;
         bmp.EndInit();
         bmp.Freeze();
         return bmp;
